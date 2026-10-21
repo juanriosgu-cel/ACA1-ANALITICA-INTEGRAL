@@ -125,92 +125,149 @@ elif section == "Clasificación del abandono":
 
 elif section == "Regresión del ingreso":
     st.subheader("Regresión lineal, Ridge y Lasso")
-    st.write("La variable objetivo es el ingreso mensual. Se utilizan edad, antigüedad, condición de abandono, rol y departamento, de acuerdo con la selección de variables del notebook.")
+    st.write("La variable objetivo es el ingreso mensual. Se comparan tres modelos con la misma partición de entrenamiento y prueba.")
     data = df[["Attrition","Age","MonthlyIncome","YearsAtCompany","JobRole","Department"]].copy()
     data = data.rename(columns={"Attrition":"Abandono","Age":"Edad","MonthlyIncome":"IngresoMensual","YearsAtCompany":"AñosEnCompañia","JobRole":"RolDeTrabajo","Department":"Departamento"})
     dm = pd.get_dummies(data, columns=["Abandono","RolDeTrabajo","Departamento"], drop_first=True)
     yreg = dm["IngresoMensual"]
     Xreg = dm.drop(columns=["IngresoMensual"])
-    Xtr,Xte,ytr,yte = train_test_split(Xreg,yreg,test_size=.2,random_state=42)
+    Xtr, Xte, ytr, yte = train_test_split(Xreg, yreg, test_size=.2, random_state=42)
     scaler = StandardScaler()
-    Xtr_s = scaler.fit_transform(Xtr); Xte_s = scaler.transform(Xte)
-    regressors = {"Lineal": (LinearRegression(), Xtr, Xte),
-                  "Ridge": (Ridge(alpha=10), Xtr_s, Xte_s),
-                  "Lasso": (Lasso(alpha=10,max_iter=10000), Xtr_s, Xte_s)}
-    rows=[]; fitted={}
-    for name,(model,trainx,testx) in regressors.items():
-        model.fit(trainx,ytr); pred=model.predict(testx); fitted[name]=(model,trainx,testx)
-        rows.append({"Modelo":name,"R²":r2_score(yte,pred),"RMSE":np.sqrt(mean_squared_error(yte,pred)),
-                     "MAE":mean_absolute_error(yte,pred),"MSE":mean_squared_error(yte,pred)})
+    Xtr_s = scaler.fit_transform(Xtr)
+    Xte_s = scaler.transform(Xte)
+    regressors = {
+        "Lineal": (LinearRegression(), Xtr, Xte),
+        "Ridge": (Ridge(alpha=10), Xtr_s, Xte_s),
+        "Lasso": (Lasso(alpha=10, max_iter=10000), Xtr_s, Xte_s)
+    }
+    rows, fitted = [], {}
+    for name, (model, trainx, testx) in regressors.items():
+        model.fit(trainx, ytr)
+        pred = model.predict(testx)
+        fitted[name] = {"model": model, "testx": testx, "pred": pred, "trainx": trainx}
+        rows.append({"Modelo": name, "R²": r2_score(yte, pred),
+                     "RMSE": np.sqrt(mean_squared_error(yte, pred)),
+                     "MAE": mean_absolute_error(yte, pred),
+                     "MSE": mean_squared_error(yte, pred)})
     met = pd.DataFrame(rows)
-    st.dataframe(met.style.format({"R²":"{:.4f}","RMSE":"{:,.2f}","MAE":"{:,.2f}","MSE":"{:,.0f}"}),use_container_width=True)
-    best = met.sort_values(["RMSE","MAE"]).iloc[0]
-    st.markdown("#### Interpretación de los resultados")
-    st.write(f"El modelo con menor RMSE en esta ejecución es **{best['Modelo']}**. Su R² es {best['R²']:.3f}, lo que indica que explica aproximadamente el {best['R²']:.1%} de la variabilidad observada del ingreso mensual en el conjunto de prueba.")
-    st.write(f"El MAE de ese modelo es ${best['MAE']:,.0f}; en términos absolutos, las predicciones se desvían del ingreso real en alrededor de esa cantidad en promedio. El RMSE ({best['RMSE']:,.0f}) penaliza con mayor peso los errores grandes.")
-    st.caption("Los coeficientes describen asociaciones condicionadas al conjunto de variables del modelo; no prueban efectos causales. Los valores pueden diferir del notebook si allí se usó otra partición o configuración.")
-    show = st.selectbox("Modelo para examinar coeficientes", list(fitted.keys()))
-    model,_,_ = fitted[show]
-    coef = pd.DataFrame({"Variable":Xreg.columns,"Coeficiente":model.coef_}).sort_values("Coeficiente",key=abs,ascending=False)
-    st.dataframe(coef.head(20).style.format({"Coeficiente":"{:,.2f}"}),use_container_width=True)
-    st.write("**Cómo leer los coeficientes:** los positivos se asocian con un ingreso estimado mayor y los negativos con uno menor, manteniendo constantes las demás variables. En modelos regularizados, la penalización reduce la magnitud de los coeficientes; las magnitudes dependen también de si se han estandarizado las variables.")
-    chosen = st.selectbox("Comparar valores reales y estimados", list(fitted.keys()), key="regplot")
-    model,_,testx = fitted[chosen]
-    preds = model.predict(testx)
-    compare = pd.DataFrame({"Ingreso real":yte.values,"Ingreso estimado":preds})
-    st.plotly_chart(px.scatter(compare,x="Ingreso real",y="Ingreso estimado",title=f"Ingreso real frente a estimado: {chosen}",opacity=.6),use_container_width=True)
-    st.caption("Puntos más cercanos a la diagonal ideal representan estimaciones más próximas al ingreso observado.")
-
+    best = met.sort_values(["RMSE", "MAE"], ascending=[True, True]).iloc[0]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Modelo recomendado por error", best["Modelo"])
+    c2.metric("R² del modelo recomendado", f"{best['R²']:.4f}")
+    c3.metric("RMSE del modelo recomendado", f"${best['RMSE']:,.0f}")
+    st.markdown("#### Comparación de modelos")
+    st.dataframe(met.style.format({"R²":"{:.4f}", "RMSE":"{:,.2f}", "MAE":"{:,.2f}", "MSE":"{:,.0f}"}), use_container_width=True, hide_index=True)
+    met_long = met.melt(id_vars="Modelo", value_vars=["R²"], var_name="Métrica", value_name="Valor")
+    st.plotly_chart(px.bar(met_long, x="Modelo", y="Valor", text="Valor", title="Comparación de R²", color="Modelo"), use_container_width=True)
+    err_long = met.melt(id_vars="Modelo", value_vars=["RMSE", "MAE"], var_name="Métrica", value_name="Error")
+    st.plotly_chart(px.bar(err_long, x="Modelo", y="Error", color="Métrica", barmode="group", title="Comparación de errores (menor es mejor)"), use_container_width=True)
+    st.markdown("#### ¿Cuál es el mejor modelo?")
+    st.write(f"Según el criterio principal de menor RMSE, **{best['Modelo']}** presenta el mejor resultado en esta ejecución. Su R² es {best['R²']:.3f}, equivalente a aproximadamente {best['R²']:.1%} de la variabilidad del ingreso mensual explicada en el conjunto de prueba.")
+    st.write(f"El MAE es ${best['MAE']:,.0f}, por lo que el error absoluto medio de predicción es de esa magnitud. El RMSE es ${best['RMSE']:,.0f} y penaliza más los errores grandes.")
+    st.caption("La selección se basa en una única partición reproducible. Si los resultados son muy próximos, la diferencia práctica puede ser pequeña. Deben verificarse frente a la partición y parámetros exactos del notebook antes de reportarlos como resultados definitivos.")
+    st.markdown("#### Interpretación de coeficientes")
+    show = st.selectbox("Seleccione el modelo para examinar sus coeficientes", list(fitted.keys()), key="reg_coef")
+    model = fitted[show]["model"]
+    coef = pd.DataFrame({"Variable": Xreg.columns, "Coeficiente": model.coef_})
+    coef["Magnitud absoluta"] = coef["Coeficiente"].abs()
+    coef = coef.sort_values("Magnitud absoluta", ascending=False)
+    st.dataframe(coef.drop(columns=["Magnitud absoluta"]).head(20).style.format({"Coeficiente":"{:,.2f}"}), use_container_width=True, hide_index=True)
+    st.write("Los coeficientes positivos se asocian con un ingreso estimado mayor y los negativos con uno menor, manteniendo constantes las demás variables. En Ridge y Lasso, los coeficientes se estiman con predictores estandarizados; por tanto, su magnitud no se interpreta directamente en las unidades originales de cada variable. Estas asociaciones no demuestran causalidad.")
+    chosen = st.selectbox("Seleccione el modelo para comparar valores reales y estimados", list(fitted.keys()), key="regplot")
+    preds = fitted[chosen]["pred"]
+    compare = pd.DataFrame({"Ingreso real": yte.values, "Ingreso estimado": preds})
+    fig_compare = px.scatter(compare, x="Ingreso real", y="Ingreso estimado", title=f"Ingreso real frente a estimado: {chosen}", opacity=.6)
+    minv = min(compare["Ingreso real"].min(), compare["Ingreso estimado"].min())
+    maxv = max(compare["Ingreso real"].max(), compare["Ingreso estimado"].max())
+    fig_compare.add_trace(go.Scatter(x=[minv, maxv], y=[minv, maxv], mode="lines", name="Predicción ideal", line=dict(dash="dash")))
+    st.plotly_chart(fig_compare, use_container_width=True)
+    st.caption("Los puntos más cercanos a la diagonal ideal representan estimaciones más próximas al ingreso observado.")
 elif section == "Segmentación de empleados":
     st.subheader("Segmentación no supervisada")
-    st.write("Se reproduce la selección de cuatro variables del notebook: edad, ingreso mensual, años de experiencia total y antigüedad en la empresa. Las variables se estandarizan antes del agrupamiento.")
-    features = ["Age","MonthlyIncome","TotalWorkingYears","YearsAtCompany"]
+    st.write("Se comparan K-means, agrupamiento jerárquico (Ward) y DBSCAN usando las mismas cuatro variables estandarizadas: edad, ingreso mensual, experiencia total y antigüedad en la empresa.")
+    features = ["Age", "MonthlyIncome", "TotalWorkingYears", "YearsAtCompany"]
     Xseg = df[features].copy()
-    Xseg.columns = ["Edad","Ingreso","Años_Experiencia","Antiguedad"]
-    scaler = StandardScaler(); Z = scaler.fit_transform(Xseg)
-    algo = st.selectbox("Método de segmentación", ["K-means","Jerárquico (Ward)","DBSCAN"])
-    if algo == "K-means":
-        k = st.slider("Número de grupos (K)",2,8,5)
-        labels = KMeans(n_clusters=k,random_state=42,n_init=10).fit_predict(Z)
-        noise = 0
-    elif algo == "Jerárquico (Ward)":
-        k = st.slider("Número de grupos",2,8,5)
-        labels = AgglomerativeClustering(n_clusters=k,linkage="ward").fit_predict(Z)
-        noise = 0
+    Xseg.columns = ["Edad", "Ingreso", "Años_Experiencia", "Antiguedad"]
+    Z = StandardScaler().fit_transform(Xseg)
+
+    # Comparación inicial de referencia. Los parámetros se declaran para que la comparación sea reproducible.
+    candidate_labels = {
+        "K-means": KMeans(n_clusters=5, random_state=42, n_init=10).fit_predict(Z),
+        "Jerárquico (Ward)": AgglomerativeClustering(n_clusters=5, linkage="ward").fit_predict(Z),
+        "DBSCAN": DBSCAN(eps=0.5, min_samples=5).fit_predict(Z)
+    }
+    comparison_rows = []
+    for name, labs in candidate_labels.items():
+        ncl = len(set(labs) - {-1})
+        valid = labs != -1
+        nnoise = int((labs == -1).sum())
+        sil = np.nan
+        if ncl >= 2 and valid.sum() > ncl and len(set(labs[valid])) >= 2:
+            try:
+                sil = silhouette_score(Z[valid], labs[valid])
+            except Exception:
+                sil = np.nan
+        comparison_rows.append({"Método": name, "Grupos": ncl, "Silhouette": sil,
+                                "Ruido": nnoise, "% ruido": nnoise / len(df) * 100})
+    comp = pd.DataFrame(comparison_rows)
+    valid_comp = comp[np.isfinite(comp["Silhouette"])]
+    best_name = valid_comp.sort_values("Silhouette", ascending=False).iloc[0]["Método"] if not valid_comp.empty else None
+    st.markdown("#### Comparación de métodos")
+    st.dataframe(comp.style.format({"Silhouette":"{:.4f}", "% ruido":"{:.2f}%"}), use_container_width=True, hide_index=True)
+    chart = comp.dropna(subset=["Silhouette"])
+    if not chart.empty:
+        st.plotly_chart(px.bar(chart, x="Método", y="Silhouette", color="Método", text="Silhouette", title="Comparación del índice Silhouette (mayor es mejor)"), use_container_width=True)
+    if best_name:
+        best_row = comp[comp["Método"] == best_name].iloc[0]
+        st.success(f"**Método con mayor Silhouette: {best_name}.** Silhouette = {best_row['Silhouette']:.4f}. Se considera la alternativa preferente según este criterio comparativo, no una garantía de que sea el mejor para todos los usos.")
+        if best_row["Silhouette"] < 0.25:
+            quality = "La separación y cohesión estimadas son débiles."
+        elif best_row["Silhouette"] < 0.50:
+            quality = "La estructura de los grupos es moderada y puede existir solapamiento entre perfiles."
+        else:
+            quality = "La separación de grupos es relativamente marcada según esta métrica."
+        st.write(f"**Interpretación:** {quality} El índice oscila entre -1 y 1; valores más altos suelen indicar grupos más compactos y separados.")
     else:
-        eps = st.slider("eps (radio de vecindad)",0.2,2.0,0.5,0.1)
-        min_samples = st.slider("Mínimo de observaciones",3,20,5)
-        labels = DBSCAN(eps=eps,min_samples=min_samples).fit_predict(Z)
-        noise = int((labels==-1).sum())
+        st.warning("No fue posible calcular Silhouette para los métodos comparados con estos parámetros. No se puede recomendar un método usando este criterio.")
+    algo = st.selectbox("Explore los resultados de un método", ["K-means", "Jerárquico (Ward)", "DBSCAN"], index=["K-means", "Jerárquico (Ward)", "DBSCAN"].index(best_name) if best_name else 0)
+    if algo == "K-means":
+        k = st.slider("Número de grupos K", 2, 8, 5, key="seg_kmeans")
+        labels = KMeans(n_clusters=k, random_state=42, n_init=10).fit_predict(Z)
+    elif algo == "Jerárquico (Ward)":
+        k = st.slider("Número de grupos", 2, 8, 5, key="seg_ward")
+        labels = AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(Z)
+    else:
+        eps = st.slider("eps (radio de vecindad)", 0.2, 2.0, 0.5, 0.1, key="seg_eps")
+        min_samples = st.slider("Mínimo de observaciones", 3, 20, 5, key="seg_min")
+        labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(Z)
     n_clusters = len(set(labels) - {-1})
     non_noise = labels != -1
-    score = silhouette_score(Z[non_noise], labels[non_noise]) if n_clusters >= 2 and non_noise.sum()>n_clusters else np.nan
-    out = Xseg.copy(); out["Grupo"] = labels.astype(str)
-    profile = out[out["Grupo"]!="-1"].groupby("Grupo")[Xseg.columns].agg(["count","mean"]).round(2)
-    st.markdown("#### Perfil de los grupos")
-    st.dataframe(profile,use_container_width=True)
-    c1,c2,c3 = st.columns(3)
-    c1.metric("Grupos identificados",n_clusters)
-    c2.metric("Silhouette",f"{score:.3f}" if np.isfinite(score) else "No calculable")
-    c3.metric("Observaciones de ruido",f"{noise:,}" if algo=="DBSCAN" else "No aplica")
-    if np.isfinite(score):
-        if score < .25:
-            quality = "La separación y cohesión de los grupos es débil."
-        elif score < .50:
-            quality = "La estructura de grupos es moderada; existe solapamiento entre algunos perfiles."
-        else:
-            quality = "La separación de grupos es relativamente marcada para esta métrica."
-        st.write(f"**Interpretación de Silhouette:** {quality} El valor puede oscilar entre -1 y 1; valores más altos suelen indicar grupos más compactos y separados.")
-    if algo=="DBSCAN":
-        st.write(f"**Interpretación de DBSCAN:** se identificaron {n_clusters} grupos y {noise} registros etiquetados como ruido ({noise/len(df):.1%} de la base). Estos registros no cumplen los criterios de densidad definidos por los parámetros; no significa automáticamente que sean errores.")
+    noise = int((labels == -1).sum())
+    score = np.nan
+    if n_clusters >= 2 and non_noise.sum() > n_clusters:
+        try:
+            score = silhouette_score(Z[non_noise], labels[non_noise])
+        except Exception:
+            pass
+    out = Xseg.copy()
+    out["Grupo"] = labels.astype(str)
+    profile = out[out["Grupo"] != "-1"].groupby("Grupo")[Xseg.columns].agg(["count", "mean"]).round(2)
+    st.markdown(f"#### Perfil de los grupos: {algo}")
+    st.dataframe(profile, use_container_width=True)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Grupos identificados", n_clusters)
+    c2.metric("Silhouette del método explorado", f"{score:.3f}" if np.isfinite(score) else "No calculable")
+    c3.metric("Observaciones de ruido", f"{noise:,}" if algo == "DBSCAN" else "No aplica")
+    if algo == "DBSCAN":
+        st.write(f"**Interpretación de DBSCAN:** se identificaron {n_clusters} grupos y {noise} registros como ruido ({noise/len(df):.1%} de la base). No cumplen los criterios de densidad definidos por los parámetros; no significa automáticamente que sean errores.")
     else:
-        st.write(f"**Interpretación de {algo}:** el algoritmo asignó cada empleado a uno de {n_clusters} grupos. Compare los promedios de edad, ingreso, experiencia y antigüedad para describir las diferencias observadas; las etiquetas de grupo son arbitrarias y no implican por sí mismas nivel de desempeño o riesgo.")
-    pca = PCA(n_components=2,random_state=42)
+        st.write(f"**Interpretación de {algo}:** el método asignó los empleados a {n_clusters} grupos. Compare los promedios de edad, ingreso, experiencia y antigüedad para describir las diferencias observadas. Las etiquetas de grupo son arbitrarias y no implican por sí mismas nivel de desempeño o riesgo.")
+    pca = PCA(n_components=2, random_state=42)
     coords = pca.fit_transform(Z)
-    plot = pd.DataFrame({"Componente 1":coords[:,0],"Componente 2":coords[:,1],"Grupo":labels.astype(str)})
-    st.plotly_chart(px.scatter(plot,x="Componente 1",y="Componente 2",color="Grupo",title=f"Visualización PCA de la segmentación: {algo}",opacity=.65),use_container_width=True)
-    st.caption(f"Los dos componentes PCA explican conjuntamente {pca.explained_variance_ratio_.sum():.1%} de la varianza estandarizada. La gráfica es una proyección bidimensional y puede ocultar separaciones presentes en dimensiones adicionales.")
-    st.download_button("Descargar empleados con grupo asignado",out.to_csv(index=False).encode("utf-8-sig"),"empleados_segmentados.csv","text/csv")
+    plot = pd.DataFrame({"Componente 1": coords[:,0], "Componente 2": coords[:,1], "Grupo": labels.astype(str)})
+    st.plotly_chart(px.scatter(plot, x="Componente 1", y="Componente 2", color="Grupo", title=f"Visualización PCA de la segmentación: {algo}", opacity=.65), use_container_width=True)
+    st.caption(f"Los dos componentes PCA explican conjuntamente {pca.explained_variance_ratio_.sum():.1%} de la varianza estandarizada. La proyección bidimensional puede ocultar separaciones presentes en otras dimensiones.")
+    st.download_button("Descargar empleados con grupo asignado", out.to_csv(index=False).encode("utf-8-sig"), "empleados_segmentados.csv", "text/csv")
 
 else:
     st.subheader("Metodología y limitaciones")
