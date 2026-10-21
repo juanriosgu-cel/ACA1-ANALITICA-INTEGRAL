@@ -222,6 +222,33 @@ elif section == "Regresión del ingreso":
     st.plotly_chart(px.bar(coef,x="Coeficiente",y="Variable",orientation="h",title=f"20 coeficientes de mayor magnitud: {chosen}"),use_container_width=True)
     st.write("**Lectura de coeficientes:** positivos se asocian con un ingreso estimado mayor y negativos con uno menor, manteniendo las demás variables constantes. Para Ridge y Lasso los predictores están estandarizados, por lo que las magnitudes no se interpretan directamente en las unidades originales. No representan causalidad.")
 
+    st.markdown("### Predicción individual del ingreso")
+    st.write("Ingrese el perfil de un empleado para estimar su ingreso mensual con el modelo seleccionado arriba.")
+    with st.container(border=True):
+        pc1, pc2, pc3 = st.columns(3)
+        edad_perfil = pc1.number_input("Edad", min_value=int(df["Age"].min()), max_value=int(df["Age"].max()), value=int(df["Age"].median()), step=1, key="reg_pred_age")
+        antiguedad_perfil = pc2.number_input("Antigüedad en la empresa (años)", min_value=int(df["YearsAtCompany"].min()), max_value=int(df["YearsAtCompany"].max()), value=int(df["YearsAtCompany"].median()), step=1, key="reg_pred_tenure")
+        abandono_perfil = pc3.selectbox("Estado de abandono", sorted(df["Attrition"].dropna().unique().tolist()), key="reg_pred_attrition")
+        pc4, pc5 = st.columns(2)
+        rol_perfil = pc4.selectbox("Rol de trabajo", sorted(df["JobRole"].dropna().unique().tolist()), key="reg_pred_jobrole")
+        depto_perfil = pc5.selectbox("Departamento", sorted(df["Department"].dropna().unique().tolist()), key="reg_pred_department")
+        if st.button("Predecir ingreso mensual", key="predict_income"):
+            perfil = pd.DataFrame([{
+                "Abandono": abandono_perfil,
+                "Edad": edad_perfil,
+                "AñosEnCompañia": antiguedad_perfil,
+                "RolDeTrabajo": rol_perfil,
+                "Departamento": depto_perfil,
+            }])
+            perfil_codificado = pd.get_dummies(perfil, columns=["Abandono", "RolDeTrabajo", "Departamento"], drop_first=True)
+            perfil_codificado = perfil_codificado.reindex(columns=Xreg.columns, fill_value=0)
+            if chosen == "Regresión lineal":
+                prediccion_ingreso = fitted[chosen][0].predict(perfil_codificado)[0]
+            else:
+                prediccion_ingreso = fitted[chosen][0].predict(scaler.transform(perfil_codificado))[0]
+            st.metric("Ingreso mensual estimado", f"${max(0, prediccion_ingreso):,.0f}")
+            st.caption(f"Estimación generada con {chosen}. Es una aproximación estadística basada en las variables ingresadas y no garantiza el ingreso real del empleado.")
+
 elif section == "Segmentación de empleados":
     st.subheader("Segmentación y perfiles de empleados")
     st.write("Seleccione las variables y el método para explorar perfiles de empleados. Las variables se estandarizan antes de aplicar los métodos.")
