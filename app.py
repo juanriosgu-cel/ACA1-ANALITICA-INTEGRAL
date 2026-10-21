@@ -26,8 +26,8 @@ st.set_page_config(page_title="Analítica de talento humano", page_icon="📊", 
 st.markdown("""
 <style>
 .block-container {padding-top: 1.6rem; padding-bottom: 2rem;}
-div[data-testid="stMetric"] {background: #f4f7fb; border: 1px solid #e1e8f0; padding: 14px; border-radius: 12px;}
-h1,h2,h3 {color: #183b56;}
+div[data-testid="stMetric"] {background: rgba(128,128,128,0.10); border: 1px solid rgba(128,128,128,0.25); padding: 14px; border-radius: 12px;}
+h1,h2,h3 {letter-spacing: -0.02em;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -94,20 +94,71 @@ elif section == "Clasificación del abandono":
                      "F1 abandono":f1_score(yte,pred,zero_division=0),
                      "ROC-AUC":roc_auc_score(yte,prob), "PR-AUC":average_precision_score(yte,prob)})
     metrics = pd.DataFrame(rows).sort_values("F1 abandono", ascending=False)
-    st.dataframe(metrics.style.format({c:"{:.3f}" for c in metrics.columns if c!="Modelo"}), use_container_width=True)
     best = metrics.iloc[0]
-    st.markdown("#### Interpretación automática")
-    st.write(f"En esta ejecución, **{best['Modelo']}** obtiene el F1 más alto para la clase de abandono ({best['F1 abandono']:.3f}). Su Recall es {best['Recall abandono']:.3f}; es decir, identifica aproximadamente el {best['Recall abandono']:.1%} de los abandonos reales del conjunto de prueba.")
-    st.caption("Este ajuste de modelos se realiza al abrir la sección; los resultados pueden diferir de los notebooks si sus particiones, variables, hiperparámetros o preprocesamiento fueron distintos.")
-    chosen = st.selectbox("Explorar matriz de confusión y curvas", list(fitted.keys()), index=list(fitted.keys()).index(best["Modelo"]))
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric("Modelos comparados", len(metrics))
+    c2.metric("Mejor F1 abandono", best["Modelo"], f"{best['F1 abandono']:.3f}")
+    c3.metric("Recall del mejor", f"{best['Recall abandono']:.3f}")
+    c4.metric("ROC-AUC del mejor", f"{best['ROC-AUC']:.3f}")
+    st.success(f"**Mejor modelo según F1 para la clase Abandonó: {best['Modelo']}**. El Recall es {best['Recall abandono']:.3f}, por lo que identifica aproximadamente el {best['Recall abandono']:.1%} de los abandonos reales en esta partición.")
+    st.markdown("### Comparación de modelos")
+    st.dataframe(metrics.style.format({c:"{:.4f}" for c in metrics.columns if c!="Modelo"}), use_container_width=True, hide_index=True)
+    metric_long = metrics.melt(id_vars="Modelo", value_vars=["Accuracy","Precision abandono","Recall abandono","F1 abandono","ROC-AUC","PR-AUC"], var_name="Métrica", value_name="Valor")
+    st.plotly_chart(px.bar(metric_long, x="Modelo", y="Valor", color="Métrica", barmode="group", title="Comparación completa de métricas por modelo", text_auto=".3f").update_yaxes(range=[0,1]), use_container_width=True)
+    st.markdown("### Análisis detallado del modelo")
+    chosen = st.selectbox("Seleccione el modelo que desea analizar", list(fitted.keys()), index=list(fitted.keys()).index(best["Modelo"]), key="class_model_select")
     pipe,pred,prob = fitted[chosen]
-    cm = confusion_matrix(yte,pred)
-    fig = px.imshow(cm, text_auto=True, x=["Predijo no abandono","Predijo abandono"], y=["Real no abandono","Real abandono"], color_continuous_scale="Blues", title=f"Matriz de confusión: {chosen}")
-    st.plotly_chart(fig, use_container_width=True)
-    tn,fp,fn,tp = cm.ravel()
-    st.write(f"**Lectura:** identificó correctamente {tp} casos de abandono y dejó pasar {fn} casos reales (falsos negativos). También clasificó como abandono {fp} empleados que no abandonaron (falsos positivos).")
-    fpr,tpr,_ = roc_curve(yte,prob)
-    st.plotly_chart(go.Figure(go.Scatter(x=fpr,y=tpr,mode="lines",name="ROC")).add_trace(go.Scatter(x=[0,1],y=[0,1],mode="lines",name="Referencia",line=dict(dash="dash"))).update_layout(title=f"Curva ROC: {chosen}",xaxis_title="Tasa de falsos positivos",yaxis_title="Tasa de verdaderos positivos"), use_container_width=True)
+    tab1,tab2,tab3,tab4 = st.tabs(["Matriz de confusión", "Curvas ROC y Precision-Recall", "Variables", "PCA"])
+    with tab1:
+        cm = confusion_matrix(yte,pred)
+        st.plotly_chart(px.imshow(cm, text_auto=True, x=["Predijo no abandono","Predijo abandono"], y=["Real no abandono","Real abandono"], color_continuous_scale="Blues", title=f"Matriz de confusión: {chosen}"), use_container_width=True)
+        tn,fp,fn,tp = cm.ravel()
+        a,b,c,d = st.columns(4)
+        a.metric("Verdaderos positivos", int(tp)); b.metric("Falsos negativos", int(fn)); c.metric("Falsos positivos", int(fp)); d.metric("Verdaderos negativos", int(tn))
+        st.write(f"**Interpretación:** {tp} abandonos fueron identificados correctamente; {fn} casos reales de abandono no fueron detectados; {fp} empleados fueron clasificados como abandono aunque permanecían. Los falsos negativos son relevantes si se busca identificar tantos abandonos como sea posible.")
+        errs=[]
+        for nm,(_,pr,_) in fitted.items():
+            cmi=confusion_matrix(yte,pr); tni,fpi,fni,tpi=cmi.ravel()
+            errs.append({"Modelo":nm,"Verdaderos positivos":tpi,"Falsos negativos":fni,"Falsos positivos":fpi,"Verdaderos negativos":tni})
+        errdf=pd.DataFrame(errs)
+        st.plotly_chart(px.bar(errdf, x="Modelo", y=["Verdaderos positivos","Falsos negativos","Falsos positivos"], barmode="group", title="Comparación de errores y aciertos entre modelos"), use_container_width=True)
+    with tab2:
+        figroc=go.Figure()
+        figpr=go.Figure()
+        for nm,(_,pr,prb) in fitted.items():
+            fpr,tpr,_=roc_curve(yte,prb)
+            prec,rec,_=precision_recall_curve(yte,prb)
+            figroc.add_trace(go.Scatter(x=fpr,y=tpr,mode="lines",name=f"{nm} (AUC={roc_auc_score(yte,prb):.3f})"))
+            figpr.add_trace(go.Scatter(x=rec,y=prec,mode="lines",name=f"{nm} (AP={average_precision_score(yte,prb):.3f})"))
+        figroc.add_trace(go.Scatter(x=[0,1],y=[0,1],mode="lines",name="Referencia",line=dict(dash="dash")))
+        figroc.update_layout(title="Curvas ROC: comparación de todos los modelos",xaxis_title="Tasa de falsos positivos",yaxis_title="Tasa de verdaderos positivos",xaxis=dict(range=[0,1]),yaxis=dict(range=[0,1]))
+        figpr.update_layout(title="Curvas Precision-Recall: comparación de todos los modelos",xaxis_title="Recall",yaxis_title="Precision",xaxis=dict(range=[0,1]),yaxis=dict(range=[0,1]))
+        st.plotly_chart(figroc,use_container_width=True); st.plotly_chart(figpr,use_container_width=True)
+        st.write("**Interpretación:** ROC-AUC resume la capacidad de ordenar casos positivos por encima de negativos. Precision-Recall se enfoca en el desempeño sobre la clase de abandono, minoritaria en esta base.")
+    with tab3:
+        estimator=pipe.named_steps["model"]
+        names=pipe.named_steps["prep"].get_feature_names_out()
+        if hasattr(estimator,"feature_importances_"):
+            imp=pd.DataFrame({"Variable":names,"Importancia":estimator.feature_importances_}).sort_values("Importancia",ascending=False).head(20).sort_values("Importancia")
+            st.plotly_chart(px.bar(imp,x="Importancia",y="Variable",orientation="h",title=f"20 variables más importantes: {chosen}"),use_container_width=True)
+            st.write("**Interpretación:** estas variables contribuyen más a las decisiones internas del modelo de árbol. La importancia no implica causalidad.")
+        elif hasattr(estimator,"coef_"):
+            co=np.ravel(estimator.coef_)
+            coef=pd.DataFrame({"Variable":names,"Coeficiente":co}).sort_values("Coeficiente",key=abs,ascending=False).head(20).sort_values("Coeficiente")
+            st.plotly_chart(px.bar(coef,x="Coeficiente",y="Variable",orientation="h",title=f"Coeficientes principales: {chosen}"),use_container_width=True)
+            st.write("**Interpretación:** el signo muestra la dirección de la asociación dentro del modelo y su magnitud depende del preprocesamiento. No representa una relación causal.")
+        else:
+            st.info("KNN no cuenta con importancia de variables nativa. Para interpretarlo se requiere aplicar una técnica adicional, como permutation importance.")
+    with tab4:
+        pca=PCA(n_components=2, random_state=42)
+        # Use the preprocessed test matrix so PCA reflects the predictor space
+        zmat=pipe.named_steps["prep"].transform(Xte)
+        if hasattr(zmat,"toarray"): zmat=zmat.toarray()
+        coords=pca.fit_transform(zmat)
+        pcadf=pd.DataFrame({"Componente 1":coords[:,0],"Componente 2":coords[:,1],"Clase real":np.where(yte.to_numpy()==1,"Abandonó","Permanece"),"Predicción":np.where(pred==1,"Abandonó","Permanece")})
+        st.plotly_chart(px.scatter(pcadf,x="Componente 1",y="Componente 2",color="Clase real",symbol="Predicción",title="PCA de los registros de prueba: clase real y predicción",opacity=.7),use_container_width=True)
+        st.caption(f"Los dos componentes explican {pca.explained_variance_ratio_.sum():.1%} de la variabilidad del espacio transformado. Es una proyección para explorar patrones, no una métrica de desempeño.")
+
     st.markdown("#### Predicción exploratoria de un registro")
     with st.expander("Ingresar valores para estimar probabilidad"):
         vals = {}
@@ -124,162 +175,133 @@ elif section == "Clasificación del abandono":
             st.write("Esta probabilidad es una estimación estadística, no una certeza sobre la conducta futura de una persona.")
 
 elif section == "Regresión del ingreso":
-    st.subheader("Regresión lineal, Ridge y Lasso")
-    st.write("La variable objetivo es el ingreso mensual. Se comparan tres modelos con la misma partición de entrenamiento y prueba.")
+    st.subheader("Regresión del ingreso mensual")
+    st.write("Se replica la selección del notebook: ingreso mensual como variable objetivo y edad, antigüedad, abandono, rol y departamento como predictores.")
     data = df[["Attrition","Age","MonthlyIncome","YearsAtCompany","JobRole","Department"]].copy()
     data = data.rename(columns={"Attrition":"Abandono","Age":"Edad","MonthlyIncome":"IngresoMensual","YearsAtCompany":"AñosEnCompañia","JobRole":"RolDeTrabajo","Department":"Departamento"})
     dm = pd.get_dummies(data, columns=["Abandono","RolDeTrabajo","Departamento"], drop_first=True)
     yreg = dm["IngresoMensual"]
     Xreg = dm.drop(columns=["IngresoMensual"])
-    Xtr, Xte, ytr, yte = train_test_split(Xreg, yreg, test_size=.2, random_state=42)
+    Xtr,Xte,ytr,yte = train_test_split(Xreg,yreg,test_size=.2,random_state=42)
     scaler = StandardScaler()
-    Xtr_s = scaler.fit_transform(Xtr)
-    Xte_s = scaler.transform(Xte)
-    regressors = {
-        "Lineal": (LinearRegression(), Xtr, Xte),
-        "Ridge": (Ridge(alpha=10), Xtr_s, Xte_s),
-        "Lasso": (Lasso(alpha=10, max_iter=10000), Xtr_s, Xte_s)
-    }
-    rows, fitted = [], {}
-    for name, (model, trainx, testx) in regressors.items():
-        model.fit(trainx, ytr)
-        pred = model.predict(testx)
-        fitted[name] = {"model": model, "testx": testx, "pred": pred, "trainx": trainx}
-        rows.append({"Modelo": name, "R²": r2_score(yte, pred),
-                     "RMSE": np.sqrt(mean_squared_error(yte, pred)),
-                     "MAE": mean_absolute_error(yte, pred),
-                     "MSE": mean_squared_error(yte, pred)})
-    met = pd.DataFrame(rows)
-    best = met.sort_values(["RMSE", "MAE"], ascending=[True, True]).iloc[0]
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Modelo recomendado por error", best["Modelo"])
-    c2.metric("R² del modelo recomendado", f"{best['R²']:.4f}")
-    c3.metric("RMSE del modelo recomendado", f"${best['RMSE']:,.0f}")
-    st.markdown("#### Comparación de modelos")
-    st.dataframe(met.style.format({"R²":"{:.4f}", "RMSE":"{:,.2f}", "MAE":"{:,.2f}", "MSE":"{:,.0f}"}), use_container_width=True, hide_index=True)
-    met_long = met.melt(id_vars="Modelo", value_vars=["R²"], var_name="Métrica", value_name="Valor")
-    st.plotly_chart(px.bar(met_long, x="Modelo", y="Valor", text="Valor", title="Comparación de R²", color="Modelo"), use_container_width=True)
-    err_long = met.melt(id_vars="Modelo", value_vars=["RMSE", "MAE"], var_name="Métrica", value_name="Error")
-    st.plotly_chart(px.bar(err_long, x="Modelo", y="Error", color="Métrica", barmode="group", title="Comparación de errores (menor es mejor)"), use_container_width=True)
-    st.markdown("#### ¿Cuál es el mejor modelo?")
-    st.write(f"Según el criterio principal de menor RMSE, **{best['Modelo']}** presenta el mejor resultado en esta ejecución. Su R² es {best['R²']:.3f}, equivalente a aproximadamente {best['R²']:.1%} de la variabilidad del ingreso mensual explicada en el conjunto de prueba.")
-    st.write(f"El MAE es ${best['MAE']:,.0f}, por lo que el error absoluto medio de predicción es de esa magnitud. El RMSE es ${best['RMSE']:,.0f} y penaliza más los errores grandes.")
-    st.caption("La selección se basa en una única partición reproducible. Si los resultados son muy próximos, la diferencia práctica puede ser pequeña. Deben verificarse frente a la partición y parámetros exactos del notebook antes de reportarlos como resultados definitivos.")
-    st.markdown("#### Interpretación de coeficientes")
-    show = st.selectbox("Seleccione el modelo para examinar sus coeficientes", list(fitted.keys()), key="reg_coef")
-    model = fitted[show]["model"]
-    coef = pd.DataFrame({"Variable": Xreg.columns, "Coeficiente": model.coef_})
-    coef["Magnitud absoluta"] = coef["Coeficiente"].abs()
-    coef = coef.sort_values("Magnitud absoluta", ascending=False)
-    st.dataframe(coef.drop(columns=["Magnitud absoluta"]).head(20).style.format({"Coeficiente":"{:,.2f}"}), use_container_width=True, hide_index=True)
-    st.write("Los coeficientes positivos se asocian con un ingreso estimado mayor y los negativos con uno menor, manteniendo constantes las demás variables. En Ridge y Lasso, los coeficientes se estiman con predictores estandarizados; por tanto, su magnitud no se interpreta directamente en las unidades originales de cada variable. Estas asociaciones no demuestran causalidad.")
-    chosen = st.selectbox("Seleccione el modelo para comparar valores reales y estimados", list(fitted.keys()), key="regplot")
-    preds = fitted[chosen]["pred"]
-    compare = pd.DataFrame({"Ingreso real": yte.values, "Ingreso estimado": preds})
-    fig_compare = px.scatter(compare, x="Ingreso real", y="Ingreso estimado", title=f"Ingreso real frente a estimado: {chosen}", opacity=.6)
-    minv = min(compare["Ingreso real"].min(), compare["Ingreso estimado"].min())
-    maxv = max(compare["Ingreso real"].max(), compare["Ingreso estimado"].max())
-    fig_compare.add_trace(go.Scatter(x=[minv, maxv], y=[minv, maxv], mode="lines", name="Predicción ideal", line=dict(dash="dash")))
-    st.plotly_chart(fig_compare, use_container_width=True)
-    st.caption("Los puntos más cercanos a la diagonal ideal representan estimaciones más próximas al ingreso observado.")
-elif section == "Segmentación de empleados":
-    st.subheader("Segmentación no supervisada")
-    st.write("Se comparan K-means, agrupamiento jerárquico (Ward) y DBSCAN usando las mismas cuatro variables estandarizadas: edad, ingreso mensual, experiencia total y antigüedad en la empresa.")
-    features = ["Age", "MonthlyIncome", "TotalWorkingYears", "YearsAtCompany"]
-    Xseg = df[features].copy()
-    Xseg.columns = ["Edad", "Ingreso", "Años_Experiencia", "Antiguedad"]
-    Z = StandardScaler().fit_transform(Xseg)
+    Xtr_s = scaler.fit_transform(Xtr); Xte_s = scaler.transform(Xte)
+    regressors = {"Lineal": (LinearRegression(), Xtr, Xte), "Ridge": (Ridge(alpha=10), Xtr_s, Xte_s), "Lasso": (Lasso(alpha=10,max_iter=10000), Xtr_s, Xte_s)}
+    rows=[]; fitted={}; predictions={}
+    for name,(model,trainx,testx) in regressors.items():
+        model.fit(trainx,ytr); pred=model.predict(testx); fitted[name]=(model,trainx,testx); predictions[name]=pred
+        rows.append({"Modelo":name,"R²":r2_score(yte,pred),"RMSE":np.sqrt(mean_squared_error(yte,pred)),"MAE":mean_absolute_error(yte,pred),"MSE":mean_squared_error(yte,pred)})
+    met=pd.DataFrame(rows)
+    best=met.sort_values(["RMSE","MAE"],ascending=True).iloc[0]
+    c1,c2,c3,c4=st.columns(4)
+    c1.metric("Mejor modelo por RMSE",best["Modelo"])
+    c2.metric("R²",f"{best['R²']:.4f}")
+    c3.metric("RMSE",f"${best['RMSE']:,.2f}")
+    c4.metric("MAE",f"${best['MAE']:,.2f}")
+    st.success(f"**Conclusión:** {best['Modelo']} obtiene el menor RMSE en esta ejecución. Su R² es {best['R²']:.3f}, por lo que explica cerca del {best['R²']:.1%} de la variabilidad del ingreso en el conjunto de prueba. La diferencia entre modelos es pequeña; se deben considerar también validación cruzada y residuos.")
+    st.markdown("### Comparación de modelos")
+    st.dataframe(met.style.format({"R²":"{:.6f}","RMSE":"{:,.2f}","MAE":"{:,.2f}","MSE":"{:,.0f}"}),use_container_width=True,hide_index=True)
+    mlong=met.melt(id_vars="Modelo",value_vars=["R²"],var_name="Métrica",value_name="Valor")
+    st.plotly_chart(px.bar(mlong,x="Modelo",y="Valor",text_auto=".4f",title="Comparación de R² (mayor es mejor)").update_yaxes(range=[0,1]),use_container_width=True)
+    errlong=met.melt(id_vars="Modelo",value_vars=["RMSE","MAE"],var_name="Métrica",value_name="Error")
+    st.plotly_chart(px.bar(errlong,x="Modelo",y="Error",color="Métrica",barmode="group",text_auto=".2f",title="Comparación de errores (menor es mejor)"),use_container_width=True)
+    st.markdown("### Análisis gráfico por modelo")
+    chosen=st.selectbox("Seleccione el modelo para ver sus gráficos e interpretación",["Ridge","Lineal","Lasso"],index=0,key="reg_model_select")
+    pred=predictions[chosen]
+    real_vs_pred=pd.DataFrame({"Ingreso real":yte.to_numpy(),"Ingreso estimado":pred})
+    fig=px.scatter(real_vs_pred,x="Ingreso real",y="Ingreso estimado",opacity=.65,title=f"Ingreso real frente a estimado: {chosen}")
+    lo=min(real_vs_pred.min()); hi=max(real_vs_pred.max())
+    fig.add_trace(go.Scatter(x=[lo,hi],y=[lo,hi],mode="lines",name="Predicción ideal",line=dict(dash="dash")))
+    st.plotly_chart(fig,use_container_width=True)
+    resid=yte.to_numpy()-pred
+    rdf=pd.DataFrame({"Ingreso estimado":pred,"Residuo":resid})
+    st.plotly_chart(px.scatter(rdf,x="Ingreso estimado",y="Residuo",title=f"Diagnóstico de residuos: {chosen}").add_hline(y=0,line_dash="dash"),use_container_width=True)
+    st.write(f"**Interpretación de {chosen}:** el MAE es ${met.loc[met['Modelo']==chosen,'MAE'].iloc[0]:,.2f}; en promedio, la diferencia absoluta entre el ingreso real y el estimado tiene ese orden de magnitud. Los residuos deben distribuirse alrededor de cero sin patrones sistemáticos; patrones visibles pueden señalar limitaciones del modelo.")
+    model,_,_=fitted[chosen]
+    coefs=np.ravel(model.coef_)
+    coef=pd.DataFrame({"Variable":Xreg.columns,"Coeficiente":coefs}).sort_values("Coeficiente",key=abs,ascending=False).head(20).sort_values("Coeficiente")
+    st.plotly_chart(px.bar(coef,x="Coeficiente",y="Variable",orientation="h",title=f"20 coeficientes de mayor magnitud: {chosen}"),use_container_width=True)
+    st.write("**Lectura de coeficientes:** positivos se asocian con un ingreso estimado mayor y negativos con uno menor, manteniendo las demás variables constantes. Para Ridge y Lasso los predictores están estandarizados, por lo que las magnitudes no se interpretan directamente en las unidades originales. No representan causalidad.")
 
-    # Comparación inicial de referencia. Los parámetros se declaran para que la comparación sea reproducible.
-    candidate_labels = {
-        "K-means": KMeans(n_clusters=5, random_state=42, n_init=10).fit_predict(Z),
-        "Jerárquico (Ward)": AgglomerativeClustering(n_clusters=5, linkage="ward").fit_predict(Z),
-        "DBSCAN": DBSCAN(eps=0.5, min_samples=5).fit_predict(Z)
-    }
-    comparison_rows = []
-    for name, labs in candidate_labels.items():
-        ncl = len(set(labs) - {-1})
-        valid = labs != -1
-        nnoise = int((labs == -1).sum())
-        sil = np.nan
-        if ncl >= 2 and valid.sum() > ncl and len(set(labs[valid])) >= 2:
-            try:
-                sil = silhouette_score(Z[valid], labs[valid])
-            except Exception:
-                sil = np.nan
-        comparison_rows.append({"Método": name, "Grupos": ncl, "Silhouette": sil,
-                                "Ruido": nnoise, "% ruido": nnoise / len(df) * 100})
-    comp = pd.DataFrame(comparison_rows)
-    valid_comp = comp[np.isfinite(comp["Silhouette"])]
-    best_name = valid_comp.sort_values("Silhouette", ascending=False).iloc[0]["Método"] if not valid_comp.empty else None
-    st.markdown("#### Comparación de métodos")
-    st.dataframe(comp.style.format({"Silhouette":"{:.4f}", "% ruido":"{:.2f}%"}), use_container_width=True, hide_index=True)
-    chart = comp.dropna(subset=["Silhouette"])
-    if not chart.empty:
-        st.plotly_chart(px.bar(chart, x="Método", y="Silhouette", color="Método", text="Silhouette", title="Comparación del índice Silhouette (mayor es mejor)"), use_container_width=True)
-    if best_name:
-        best_row = comp[comp["Método"] == best_name].iloc[0]
-        st.success(f"**Método con mayor Silhouette: {best_name}.** Silhouette = {best_row['Silhouette']:.4f}. Se considera la alternativa preferente según este criterio comparativo, no una garantía de que sea el mejor para todos los usos.")
-        if best_row["Silhouette"] < 0.25:
-            quality = "La separación y cohesión estimadas son débiles."
-        elif best_row["Silhouette"] < 0.50:
-            quality = "La estructura de los grupos es moderada y puede existir solapamiento entre perfiles."
-        else:
-            quality = "La separación de grupos es relativamente marcada según esta métrica."
-        st.write(f"**Interpretación:** {quality} El índice oscila entre -1 y 1; valores más altos suelen indicar grupos más compactos y separados.")
+elif section == "Segmentación de empleados":
+    st.subheader("Segmentación y perfiles de empleados")
+    st.write("Se utilizan las cuatro variables del notebook: edad, ingreso mensual, años de experiencia y antigüedad. Se estandarizan antes de aplicar los métodos.")
+    Xseg=df[["Age","MonthlyIncome","TotalWorkingYears","YearsAtCompany"]].copy()
+    Xseg.columns=["Edad","Ingreso","Años_Experiencia","Antiguedad"]
+    Z=StandardScaler().fit_transform(Xseg)
+    # Reproducir configuraciones base del notebook para que la comparación sea interpretable
+    labels_all={"K-means":KMeans(n_clusters=5,random_state=42,n_init=10).fit_predict(Z),
+                "Jerárquico (Ward)":AgglomerativeClustering(n_clusters=5).fit_predict(Z),
+                "DBSCAN":DBSCAN(eps=0.5,min_samples=5).fit_predict(Z)}
+    scores={}
+    for name,lab in labels_all.items():
+        valid=lab!=-1 if name=="DBSCAN" else np.ones(len(lab),dtype=bool)
+        uniq=set(lab[valid])
+        # Para DBSCAN se replica el cálculo del notebook original, incluyendo la etiqueta -1.
+        scores[name]=silhouette_score(Z,lab) if name=="DBSCAN" and len(set(lab))>1 else (silhouette_score(Z[valid],lab[valid]) if len(uniq)>1 and valid.sum()>len(uniq) else np.nan)
+    score_df=pd.DataFrame([{"Método":n,"Silhouette":v,"Grupos":len(set(labels_all[n])-({-1} if n=="DBSCAN" else set())),"Ruido":int((labels_all[n]==-1).sum()) if n=="DBSCAN" else 0} for n,v in scores.items()])
+    valid_scores=score_df.dropna(subset=["Silhouette"])
+    best=valid_scores.sort_values("Silhouette",ascending=False).iloc[0] if not valid_scores.empty else None
+    c1,c2,c3=st.columns(3)
+    if best is not None:
+        c1.metric("Mejor Silhouette",best["Método"],f"{best['Silhouette']:.4f}")
+        c2.metric("Grupos del método mejor puntuado",int(best["Grupos"]))
     else:
-        st.warning("No fue posible calcular Silhouette para los métodos comparados con estos parámetros. No se puede recomendar un método usando este criterio.")
-    algo = st.selectbox("Explore los resultados de un método", ["K-means", "Jerárquico (Ward)", "DBSCAN"], index=["K-means", "Jerárquico (Ward)", "DBSCAN"].index(best_name) if best_name else 0)
-    if algo == "K-means":
-        k = st.slider("Número de grupos K", 2, 8, 5, key="seg_kmeans")
-        labels = KMeans(n_clusters=k, random_state=42, n_init=10).fit_predict(Z)
-    elif algo == "Jerárquico (Ward)":
-        k = st.slider("Número de grupos", 2, 8, 5, key="seg_ward")
-        labels = AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(Z)
+        c1.metric("Mejor método","No calculable")
+        c2.metric("Grupos","—")
+    c3.metric("Ruido DBSCAN",f"{int((labels_all['DBSCAN']==-1).sum())} ({(labels_all['DBSCAN']==-1).mean():.2%})")
+    if best is not None:
+        st.success(f"**Método con mayor Silhouette: {best['Método']} ({best['Silhouette']:.4f}).** Es el mejor según este criterio entre las tres configuraciones comparadas. El valor indica la cohesión y separación relativas; no prueba que los grupos sean útiles para todos los propósitos.")
+    st.markdown("### Comparación de métodos")
+    st.dataframe(score_df.style.format({"Silhouette":"{:.4f}"}),use_container_width=True,hide_index=True)
+    st.plotly_chart(px.bar(score_df,x="Método",y="Silhouette",text_auto=".4f",title="Comparación de Silhouette: mayor es mejor"),use_container_width=True)
+    st.markdown("### Explorar cada método")
+    algo=st.selectbox("Seleccione el método que desea analizar",["K-means","Jerárquico (Ward)","DBSCAN"],index=0,key="cluster_method_select")
+    labels=labels_all[algo]
+    n_clusters=len(set(labels)-({-1} if algo=="DBSCAN" else set()))
+    noise=int((labels==-1).sum()) if algo=="DBSCAN" else 0
+    out=Xseg.copy(); out["Grupo"]=labels.astype(str)
+    profile=out[out["Grupo"]!="-1"].groupby("Grupo")[Xseg.columns].agg(["count","mean"]).round(2)
+    st.markdown(f"#### Perfil de grupos: {algo}")
+    st.dataframe(profile,use_container_width=True)
+    a,b,c=st.columns(3)
+    a.metric("Grupos identificados",n_clusters)
+    a_score=scores[algo]
+    b.metric("Silhouette",f"{a_score:.4f}" if np.isfinite(a_score) else "No calculable")
+    c.metric("Observaciones de ruido",f"{noise:,}" if algo=="DBSCAN" else "No aplica")
+    if np.isfinite(a_score):
+        st.write("**Interpretación:** " + ("la separación de los grupos es relativamente débil/moderada y existe solapamiento entre algunos perfiles." if a_score<.5 else "los grupos presentan una separación relativamente marcada según Silhouette."))
+    if algo=="DBSCAN":
+        st.write(f"DBSCAN identificó {n_clusters} grupos y {noise} observaciones como ruido ({noise/len(df):.2%}). El ruido corresponde a registros que no cumplen el criterio de densidad configurado; no significa que sean errores.")
     else:
-        eps = st.slider("eps (radio de vecindad)", 0.2, 2.0, 0.5, 0.1, key="seg_eps")
-        min_samples = st.slider("Mínimo de observaciones", 3, 20, 5, key="seg_min")
-        labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(Z)
-    n_clusters = len(set(labels) - {-1})
-    non_noise = labels != -1
-    noise = int((labels == -1).sum())
-    score = np.nan
-    if n_clusters >= 2 and non_noise.sum() > n_clusters:
-        try:
-            score = silhouette_score(Z[non_noise], labels[non_noise])
-        except Exception:
-            pass
-    out = Xseg.copy()
-    out["Grupo"] = labels.astype(str)
-    profile = out[out["Grupo"] != "-1"].groupby("Grupo")[Xseg.columns].agg(["count", "mean"]).round(2)
-    st.markdown(f"#### Perfil de los grupos: {algo}")
-    st.dataframe(profile, use_container_width=True)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Grupos identificados", n_clusters)
-    c2.metric("Silhouette del método explorado", f"{score:.3f}" if np.isfinite(score) else "No calculable")
-    c3.metric("Observaciones de ruido", f"{noise:,}" if algo == "DBSCAN" else "No aplica")
-    if algo == "DBSCAN":
-        st.write(f"**Interpretación de DBSCAN:** se identificaron {n_clusters} grupos y {noise} registros como ruido ({noise/len(df):.1%} de la base). No cumplen los criterios de densidad definidos por los parámetros; no significa automáticamente que sean errores.")
-    else:
-        st.write(f"**Interpretación de {algo}:** el método asignó los empleados a {n_clusters} grupos. Compare los promedios de edad, ingreso, experiencia y antigüedad para describir las diferencias observadas. Las etiquetas de grupo son arbitrarias y no implican por sí mismas nivel de desempeño o riesgo.")
-    pca = PCA(n_components=2, random_state=42)
-    coords = pca.fit_transform(Z)
-    plot = pd.DataFrame({"Componente 1": coords[:,0], "Componente 2": coords[:,1], "Grupo": labels.astype(str)})
-    st.plotly_chart(px.scatter(plot, x="Componente 1", y="Componente 2", color="Grupo", title=f"Visualización PCA de la segmentación: {algo}", opacity=.65), use_container_width=True)
-    st.caption(f"Los dos componentes PCA explican conjuntamente {pca.explained_variance_ratio_.sum():.1%} de la varianza estandarizada. La proyección bidimensional puede ocultar separaciones presentes en otras dimensiones.")
-    st.download_button("Descargar empleados con grupo asignado", out.to_csv(index=False).encode("utf-8-sig"), "empleados_segmentados.csv", "text/csv")
+        st.write("Las etiquetas numéricas de los grupos son arbitrarias. Para describir cada perfil, compare sus promedios de edad, ingreso, experiencia y antigüedad; no debe inferirse nivel de desempeño ni riesgo sin evidencia adicional.")
+    pca=PCA(n_components=2,random_state=42); coords=pca.fit_transform(Z)
+    plot=pd.DataFrame({"Componente 1":coords[:,0],"Componente 2":coords[:,1],"Grupo":labels.astype(str)})
+    st.plotly_chart(px.scatter(plot,x="Componente 1",y="Componente 2",color="Grupo",title=f"Proyección PCA de empleados: {algo}",opacity=.7),use_container_width=True)
+    st.caption(f"Los dos componentes PCA explican conjuntamente {pca.explained_variance_ratio_.sum():.1%} de la varianza estandarizada. La proyección puede ocultar estructura presente en las dimensiones originales.")
+    # Side-by-side comparison of the three methods, similar to the notebook
+    st.markdown("### Comparación visual de los tres métodos")
+    fig=go.Figure()
+    for method,lab in labels_all.items():
+        fig.add_trace(go.Scatter(x=coords[:,0],y=coords[:,1],mode="markers",name=method,visible=(method==algo),marker=dict(size=6),text=lab.astype(str),hovertemplate="PC1=%{x:.2f}<br>PC2=%{y:.2f}<br>Grupo=%{text}<extra></extra>"))
+    fig.update_layout(title="PCA: seleccione la leyenda para mostrar/ocultar métodos",xaxis_title="Componente 1",yaxis_title="Componente 2")
+    st.plotly_chart(fig,use_container_width=True)
+    st.download_button("Descargar empleados con grupo asignado",out.to_csv(index=False).encode("utf-8-sig"),f"empleados_segmentados_{algo.replace(' ','_')}.csv","text/csv")
 
 else:
     st.subheader("Metodología y limitaciones")
-    st.markdown("""
-    **Clasificación:** se estima la clase `Attrition` (Yes/No). Recall, F1 y Precision se refieren a la clase positiva `Yes`; ROC-AUC y PR-AUC se calculan a partir de probabilidades.
-
-    **Regresión:** se estima `MonthlyIncome` a partir de edad, antigüedad, abandono, rol y departamento. R² resume la proporción de variabilidad explicada; MAE y RMSE están expresados en unidades monetarias de la base.
-
-    **Segmentación:** se agrupan empleados a partir de edad, ingreso, experiencia total y antigüedad, tras estandarizar las variables. Silhouette resume cohesión y separación; en DBSCAN los puntos con etiqueta -1 se consideran ruido.
-
-    **Limitaciones:** los resultados dependen de esta base de datos y de las decisiones de preprocesamiento. No permiten establecer causalidad ni deben utilizarse como único criterio para decisiones que afecten a personas. Las predicciones y agrupaciones son exploratorias y requieren validación contextual antes de cualquier aplicación real.
-    """)
+    etapas = [
+        ("1. Datos", "Se utiliza la base IBM HR Analytics, con 1.470 registros y variables demográficas, laborales y salariales."),
+        ("2. Preprocesamiento", "Se revisan tipos de variables y se transforman las variables categóricas mediante codificación. En clasificación se aplica preprocesamiento dentro del pipeline; en regresión se emplea la codificación dummy definida en el notebook; en segmentación se estandarizan las cuatro variables numéricas seleccionadas."),
+        ("3. Modelamiento", "Clasificación: Regresión Logística, KNN, Árbol de Decisión y Random Forest. Regresión: Lineal, Ridge y Lasso. Segmentación: K-means, jerárquico y DBSCAN."),
+        ("4. Optimización y selección", "Los modelos se comparan con métricas apropiadas a cada tarea. Para regresión se consideran R², MAE y RMSE; para segmentación se compara Silhouette; para clasificación se revisan Recall, F1, ROC-AUC y PR-AUC, además de la matriz de confusión."),
+        ("5. Evaluación e interpretación", "Cada módulo presenta tablas, visualizaciones y una interpretación automática que identifica el mejor resultado según el criterio definido. La selección se refiere a los modelos y parámetros ejecutados en la aplicación."),
+        ("6. Limitaciones", "Los resultados dependen de las variables, particiones y parámetros empleados. Las asociaciones no demuestran causalidad, las etiquetas de grupo son arbitrarias y las predicciones no deben utilizarse como único criterio para decisiones laborales.")
+    ]
+    for titulo, descripcion in etapas:
+        with st.container(border=True):
+            st.subheader(titulo)
+            st.write(descripcion)
+    st.info("Referencia a los resultados de los notebooks: Ridge obtuvo el menor RMSE en la evaluación de regresión registrada (1.943,80 aproximadamente); K-means obtuvo Silhouette de 0,3363, superior al jerárquico (0,3079) y DBSCAN (0,3007). En clasificación, la aplicación recalcula métricas en su partición de prueba y pueden diferir de las cifras del notebook original.")
     st.write("Base usada:", f"{len(df):,} filas y {df.shape[1]} columnas.")
     st.write("Valores faltantes totales:", int(df.isna().sum().sum()))
     st.write("Registros duplicados:", int(df.duplicated().sum()))
