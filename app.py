@@ -43,7 +43,7 @@ st.info("Aplicación académica para explorar resultados estadísticos. Las asoc
 with st.sidebar:
     st.header("Navegación")
     section = st.radio("Seleccione el módulo", [
-        "Resumen general", "Clasificación del abandono", "Regresión del ingreso", "Segmentación de empleados", "Metodología y limitaciones"
+        "Resumen general", "Análisis exploratorio (EDA)", "Clasificación del abandono", "Regresión del ingreso", "Segmentación de empleados", "Metodología y limitaciones"
     ])
     st.divider()
     st.caption("Base de datos IBM HR Analytics")
@@ -373,6 +373,131 @@ elif section == "Segmentación de empleados":
         fig.update_layout(title="PCA: seleccione la leyenda para mostrar/ocultar métodos", xaxis_title="Componente 1", yaxis_title="Componente 2")
         st.plotly_chart(fig, use_container_width=True)
         st.download_button("Descargar empleados con grupo asignado", out.to_csv(index=False).encode("utf-8-sig"), f"empleados_segmentados_{algo.replace(' ', '_')}.csv", "text/csv")
+
+elif section == "Análisis exploratorio (EDA)":
+    st.subheader("Análisis exploratorio de datos (EDA)")
+    st.write("Esta sección consolida los análisis del notebook ACA1_Abandonoaprendizaje.ipynb: estructura y calidad de los datos, distribución del abandono, estadística descriptiva, comparación de variables numéricas y categóricas, correlaciones y detección de valores atípicos. Los resultados son descriptivos y no demuestran causalidad.")
+
+    eda = df.copy()
+    eda = eda.drop(columns=["EmployeeNumber", "EmployeeCount", "Over18", "StandardHours"], errors="ignore")
+    total = len(eda)
+    n_yes = int((eda["Attrition"] == "Yes").sum())
+    n_no = int((eda["Attrition"] == "No").sum())
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Registros", f"{len(df):,}")
+    c2.metric("Variables originales", f"{df.shape[1]}")
+    c3.metric("Abandonos", f"{n_yes:,}", f"{n_yes/total:.2%}")
+    c4.metric("Permanecen", f"{n_no:,}", f"{n_no/total:.2%}")
+
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Calidad de datos", "Distribuciones", "Comparación por abandono", "Relaciones", "Valores atípicos"])
+    with tab1:
+        st.markdown("### Estructura de la base")
+        t1, t2 = st.columns(2)
+        t1.write("**Tipos de variables**")
+        types = pd.DataFrame({"Variable": df.columns, "Tipo": df.dtypes.astype(str).values, "Valores únicos": [df[c].nunique(dropna=False) for c in df.columns]})
+        t1.dataframe(types, use_container_width=True, hide_index=True, height=360)
+        t2.write("**Calidad y consistencia**")
+        quality = pd.DataFrame({"Valores faltantes": df.isna().sum(), "% faltantes": (df.isna().mean()*100).round(2), "Valores únicos": df.nunique(dropna=False)}).reset_index(names="Variable")
+        t2.dataframe(quality, use_container_width=True, hide_index=True, height=360)
+        q1,q2,q3 = st.columns(3)
+        q1.metric("Celdas faltantes", f"{int(df.isna().sum().sum()):,}")
+        q2.metric("Filas duplicadas", f"{int(df.duplicated().sum()):,}")
+        q3.metric("Variables constantes", f"{int((df.nunique(dropna=False) <= 1).sum())}")
+        checks = {}
+        for col in ["YearsAtCompany", "YearsInCurrentRole", "YearsWithCurrManager", "YearsSinceLastPromotion"]:
+            if col in df.columns and "YearsAtCompany" in df.columns:
+                checks[f"{col} > YearsAtCompany"] = int((df[col] > df["YearsAtCompany"]).sum()) if col != "YearsAtCompany" else 0
+        if checks:
+            st.markdown("**Validaciones de consistencia de permanencia**")
+            st.dataframe(pd.DataFrame({"Regla revisada": list(checks.keys()), "Registros observados": list(checks.values())}), use_container_width=True, hide_index=True)
+        st.caption("Las variables identificadoras o constantes se excluyen del conjunto analítico cuando no aportan variabilidad; no se eliminan registros automáticamente.")
+
+    with tab2:
+        st.markdown("### Distribución del abandono")
+        counts = df["Attrition"].value_counts().reindex(["No", "Yes"], fill_value=0)
+        dist = pd.DataFrame({"Condición": ["Permanece", "Abandonó"], "Empleados": [int(counts.get("No",0)), int(counts.get("Yes",0))]})
+        dist["Porcentaje"] = dist["Empleados"] / max(len(df),1) * 100
+        c1,c2 = st.columns([1,1])
+        c1.dataframe(dist.style.format({"Porcentaje":"{:.2f}%"}), use_container_width=True, hide_index=True)
+        c2.plotly_chart(px.bar(dist, x="Condición", y="Empleados", color="Condición", text="Porcentaje", title="Distribución del abandono", labels={"Porcentaje":"Porcentaje (%)"}), use_container_width=True)
+        st.markdown("### Estadística descriptiva")
+        num_cols = [c for c in ["Age", "MonthlyIncome", "YearsAtCompany", "TotalWorkingYears", "DistanceFromHome", "YearsInCurrentRole", "YearsSinceLastPromotion", "YearsWithCurrManager"] if c in df.columns]
+        st.dataframe(eda[num_cols].describe().T, use_container_width=True)
+        st.markdown("### Distribuciones numéricas")
+        selected_num = st.selectbox("Seleccione una variable numérica", num_cols, key="eda_num_dist")
+        st.plotly_chart(px.histogram(df, x=selected_num, color="Attrition", marginal="box", barmode="overlay", opacity=.65, title=f"Distribución de {selected_num} según abandono"), use_container_width=True)
+
+    with tab3:
+        st.markdown("### Variables numéricas según condición de abandono")
+        num_compare = [c for c in ["Age", "MonthlyIncome", "YearsAtCompany", "TotalWorkingYears", "DistanceFromHome", "YearsInCurrentRole", "YearsSinceLastPromotion", "YearsWithCurrManager"] if c in df.columns]
+        selected_compare = st.multiselect("Variables numéricas para comparar", num_compare, default=[c for c in ["Age", "MonthlyIncome", "YearsAtCompany", "TotalWorkingYears"] if c in num_compare], key="eda_num_compare")
+        if selected_compare:
+            medians = df.groupby("Attrition")[selected_compare].median().T.reset_index(names="Variable")
+            means = df.groupby("Attrition")[selected_compare].mean().T.reset_index(names="Variable")
+            st.markdown("**Medianas por condición**")
+            st.dataframe(medians, use_container_width=True, hide_index=True)
+            st.markdown("**Medias por condición**")
+            st.dataframe(means.round(2), use_container_width=True, hide_index=True)
+            melted = df.melt(id_vars="Attrition", value_vars=selected_compare, var_name="Variable", value_name="Valor")
+            st.plotly_chart(px.box(melted, x="Variable", y="Valor", color="Attrition", facet_col="Variable", facet_col_wrap=2, title="Distribuciones numéricas según abandono", points=False), use_container_width=True)
+        st.markdown("### Tasa de abandono por categoría")
+        cat_candidates = [c for c in ["OverTime", "BusinessTravel", "JobSatisfaction", "EnvironmentSatisfaction", "JobInvolvement", "WorkLifeBalance", "JobLevel", "Department", "JobRole", "MaritalStatus", "StockOptionLevel"] if c in df.columns]
+        cat_var = st.selectbox("Seleccione una variable categórica", cat_candidates, index=cat_candidates.index("OverTime") if "OverTime" in cat_candidates else 0, key="eda_cat_rate")
+        rate = (df.assign(_abandono=(df["Attrition"]=="Yes").astype(int)).groupby(cat_var, dropna=False)['_abandono'].agg(Empleados="size", Abandonos="sum", Tasa_abandono="mean").reset_index())
+        rate["Tasa_abandono_%"] = rate["Tasa_abandono"]*100
+        rate = rate.sort_values("Tasa_abandono_%", ascending=False)
+        st.dataframe(rate.drop(columns="Tasa_abandono").style.format({"Tasa_abandono_%":"{:.2f}%"}), use_container_width=True, hide_index=True)
+        st.plotly_chart(px.bar(rate, x=cat_var, y="Tasa_abandono_%", text="Tasa_abandono_%", title=f"Tasa de abandono según {cat_var}", labels={"Tasa_abandono_%":"Tasa de abandono (%)"}), use_container_width=True)
+
+    with tab4:
+        st.markdown("### Abandono según rol y departamento")
+        org_var = st.selectbox("Variable organizacional", [c for c in ["Department", "JobRole"] if c in df.columns], key="eda_org_var")
+        org = (df.assign(_abandono=(df["Attrition"]=="Yes").astype(int)).groupby(org_var)['_abandono'].agg(Empleados="size", Abandonos="sum", Tasa="mean").reset_index())
+        org["Tasa de abandono (%)"] = org["Tasa"]*100
+        org = org.sort_values("Tasa de abandono (%)", ascending=False)
+        st.dataframe(org.drop(columns="Tasa").style.format({"Tasa de abandono (%)":"{:.2f}%"}), use_container_width=True, hide_index=True)
+        st.plotly_chart(px.bar(org, x=org_var, y="Tasa de abandono (%)", title=f"Tasa de abandono por {org_var}", text="Tasa de abandono (%)"), use_container_width=True)
+        st.markdown("### Correlación entre variables numéricas")
+        corr_vars = [c for c in ["Age", "MonthlyIncome", "YearsAtCompany", "TotalWorkingYears", "DistanceFromHome", "YearsInCurrentRole", "YearsSinceLastPromotion", "YearsWithCurrManager"] if c in df.columns]
+        corr = df[corr_vars].corr()
+        st.plotly_chart(px.imshow(corr, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1, title="Matriz de correlación de variables numéricas"), use_container_width=True)
+        st.caption("La correlación describe asociación lineal entre variables numéricas; no demuestra causalidad.")
+        st.markdown("### Relación conjunta de variables")
+        pair_vars = [c for c in ["Age", "MonthlyIncome", "YearsAtCompany", "TotalWorkingYears"] if c in df.columns]
+        pair_x = st.selectbox("Variable del eje X", pair_vars, index=0, key="eda_pair_x")
+        pair_y = st.selectbox("Variable del eje Y", [c for c in pair_vars if c != pair_x], index=0, key="eda_pair_y")
+        st.plotly_chart(px.scatter(df, x=pair_x, y=pair_y, color="Attrition", opacity=.65, title=f"{pair_y} frente a {pair_x}, según abandono"), use_container_width=True)
+
+    with tab5:
+        st.markdown("### Detección de valores atípicos mediante IQR")
+        st.write("El rango intercuartílico (IQR) identifica observaciones alejadas del rango central. La detección no implica que deban eliminarse: deben conservarse si son plausibles para el contexto.")
+        out_vars = [c for c in ["Age", "MonthlyIncome", "YearsAtCompany", "TotalWorkingYears", "DistanceFromHome", "YearsInCurrentRole", "YearsSinceLastPromotion", "YearsWithCurrManager"] if c in df.columns]
+        out_rows=[]
+        for col in out_vars:
+            q1=df[col].quantile(.25); q3=df[col].quantile(.75); iqr=q3-q1
+            lo=q1-1.5*iqr; hi=q3+1.5*iqr
+            out_rows.append({"Variable":col,"Q1":q1,"Q3":q3,"IQR":iqr,"Límite inferior":lo,"Límite superior":hi,"Valores atípicos":int(((df[col]<lo)|(df[col]>hi)).sum())})
+        out_df=pd.DataFrame(out_rows)
+        st.dataframe(out_df.style.format({c:"{:,.2f}" for c in ["Q1","Q3","IQR","Límite inferior","Límite superior"]}), use_container_width=True, hide_index=True)
+        out_var=st.selectbox("Variable para visualizar valores atípicos", out_vars, key="eda_outlier_var")
+        st.plotly_chart(px.box(df, y=out_var, points="outliers", title=f"Valores atípicos identificados visualmente: {out_var}"), use_container_width=True)
+
+    st.markdown("### Principales hallazgos de la EDA")
+    med = df.groupby("Attrition")[[c for c in ["YearsAtCompany", "MonthlyIncome", "Age"] if c in df.columns]].median()
+    overtime_rates = (df.assign(_abandono=(df["Attrition"]=="Yes").astype(int)).groupby("OverTime")['_abandono'].mean()*100) if "OverTime" in df.columns else pd.Series(dtype=float)
+    c_yes = float((df["Attrition"]=="Yes").mean()*100)
+    st.write(f"- El abandono representa **{c_yes:.2f}%** de los registros ({n_yes:,} empleados).")
+    if "YearsAtCompany" in med.columns and "Yes" in med.index and "No" in med.index:
+        st.write(f"- La mediana de antigüedad es de **{med.loc['Yes','YearsAtCompany']:.0f} años** entre quienes abandonaron y **{med.loc['No','YearsAtCompany']:.0f} años** entre quienes permanecieron.")
+    if "MonthlyIncome" in med.columns and "Yes" in med.index and "No" in med.index:
+        st.write(f"- La mediana del ingreso mensual es **${med.loc['Yes','MonthlyIncome']:,.0f}** en el grupo que abandonó y **${med.loc['No','MonthlyIncome']:,.0f}** en el grupo que permaneció.")
+    if len(overtime_rates) and "Yes" in overtime_rates.index and "No" in overtime_rates.index:
+        st.write(f"- La tasa de abandono es **{overtime_rates['Yes']:.1f}%** entre quienes realizan horas extra y **{overtime_rates['No']:.1f}%** entre quienes no las realizan.")
+    if "JobRole" in df.columns:
+        role_rates=(df.assign(_abandono=(df["Attrition"]=="Yes").astype(int)).groupby("JobRole")['_abandono'].mean()*100).sort_values(ascending=False)
+        if not role_rates.empty:
+            st.write(f"- El rol con mayor tasa observada de abandono es **{role_rates.index[0]}** ({role_rates.iloc[0]:.1f}%).")
+    st.info("Estos hallazgos son descriptivos. Las diferencias observadas no prueban que una variable cause el abandono y deben evaluarse con análisis estadísticos y modelos posteriores.")
 
 else:
     st.subheader("Metodología y limitaciones")
