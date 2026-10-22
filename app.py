@@ -467,6 +467,18 @@ elif section == "Análisis exploratorio (EDA)":
         pair_x = st.selectbox("Variable del eje X", pair_vars, index=0, key="eda_pair_x")
         pair_y = st.selectbox("Variable del eje Y", [c for c in pair_vars if c != pair_x], index=0, key="eda_pair_y")
         st.plotly_chart(px.scatter(df, x=pair_x, y=pair_y, color="Attrition", opacity=.65, title=f"{pair_y} frente a {pair_x}, según abandono"), use_container_width=True)
+        st.markdown("### Matriz de dispersión de variables principales")
+        st.caption("Permite explorar simultáneamente las relaciones entre edad, ingreso mensual, antigüedad y experiencia, diferenciando la condición de abandono.")
+        st.plotly_chart(
+            px.scatter_matrix(
+                df,
+                dimensions=pair_vars,
+                color="Attrition",
+                opacity=0.55,
+                title="Matriz de dispersión: variables principales y abandono"
+            ),
+            use_container_width=True
+        )
 
     with tab5:
         st.markdown("### Detección de valores atípicos mediante IQR")
