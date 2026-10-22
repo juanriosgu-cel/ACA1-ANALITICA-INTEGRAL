@@ -28,6 +28,16 @@ st.markdown("""
 .block-container {padding-top: 1.6rem; padding-bottom: 2rem;}
 div[data-testid="stMetric"] {background: rgba(128,128,128,0.10); border: 1px solid rgba(128,128,128,0.25); padding: 14px; border-radius: 12px;}
 h1,h2,h3 {letter-spacing: -0.02em;}
+.cover-card {background: linear-gradient(120deg, #102A43 0%, #174A6E 58%, #167D8D 100%); color: #FFFFFF; padding: 2rem 2.2rem; border-radius: 18px; margin: .2rem 0 1rem 0; border: 1px solid rgba(255,255,255,.18); box-shadow: 0 8px 24px rgba(15,42,67,.18);}
+.cover-kicker {font-size: .78rem; letter-spacing: .12em; font-weight: 700; color: #C9F0F2; margin-bottom: 1rem;}
+.cover-card h1 {font-size: clamp(1.8rem, 3vw, 2.65rem); line-height: 1.15; color: white; margin: 0 0 .65rem 0;}
+.cover-subtitle {font-size: 1.05rem; color: #EAF7FA; margin: 0;}
+.cover-rule {height: 1px; background: rgba(255,255,255,.35); margin: 1.35rem 0;}
+.cover-grid {display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;}
+.cover-label {font-size: .72rem; font-weight: 800; letter-spacing: .12em; color: #B9E8EB; margin-bottom: .55rem;}
+.cover-names {font-size: .95rem; line-height: 1.9; color: #FFFFFF;}
+.cover-teacher {font-size: 1.05rem; font-weight: 650; color: #FFFFFF; padding-top: .25rem;}
+@media (max-width: 640px) {.cover-card {padding: 1.35rem;} .cover-grid {grid-template-columns: 1fr; gap: 1rem;}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -36,7 +46,18 @@ def load_data():
     return pd.read_csv("WA_Fn-UseC_-HR-Employee-Attrition.csv")
 
 df = load_data()
-st.title("Analítica de talento humano")
+st.markdown("""
+<div class="cover-card">
+  <div class="cover-kicker">APRENDIZAJE AUTOMÁTICO · ESPECIALIZACIÓN EN INTELIGENCIA ARTIFICIAL</div>
+  <h1>Analítica exploratoria y modelamiento de talento humano</h1>
+  <p class="cover-subtitle">Dataset IBM HR Analytics — Employee Attrition (Abandono)</p>
+  <div class="cover-rule"></div>
+  <div class="cover-grid">
+    <div><div class="cover-label">PRESENTADO POR</div><div class="cover-names">Juan Guillermo Ríos<br>Víctor Rodríguez Polo<br>Michelle Ángel Castillo Mendoza</div></div>
+    <div><div class="cover-label">DOCENTE</div><div class="cover-teacher">Hamilton Rivera</div></div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 st.caption("Clasificación del abandono, regresión del ingreso y segmentación de empleados | IBM HR Analytics")
 st.info("Aplicación académica para explorar resultados estadísticos. Las asociaciones observadas no demuestran causalidad ni deben usarse como única base para decisiones laborales.")
 
@@ -515,36 +536,99 @@ elif section == "Análisis exploratorio (EDA)":
         st.markdown("- **Azul:** registros que no presentan valores fuera de los límites IQR en las variables evaluadas.\n- **Coral:** registros con al menos un valor fuera de esos límites.\n- **Importante:** la marca es una alerta exploratoria, no una conclusión de error o anomalía laboral.")
 
     with tab6:
-        st.markdown("### Vista integrada de los modelos")
-        st.caption("Gráficas de referencia calculadas en esta sección a partir del mismo dataset. Los módulos individuales conservan sus controles y análisis detallados.")
-        left,right=st.columns(2)
-        with left:
-            st.markdown("#### Clasificación del abandono")
-            counts_model=df["Attrition"].value_counts().reindex(["No","Yes"],fill_value=0)
-            class_view=pd.DataFrame({"Condición":["Permanece","Abandonó"],"Empleados":[int(counts_model["No"]),int(counts_model["Yes"])]})
-            fig_class=px.bar(class_view,x="Condición",y="Empleados",color="Condición",text="Empleados",color_discrete_map={"Permanece":"#2583C5","Abandonó":"#E76F51"},title="Distribución de la variable objetivo")
-            fig_class.update_layout(template="plotly_white",title_x=.03,showlegend=False,height=370)
-            st.plotly_chart(fig_class,use_container_width=True)
-            st.info("Para la matriz de confusión, Recall, F1 y comparación de clasificadores, abra el módulo **Clasificación del abandono**.")
-        with right:
-            st.markdown("#### Regresión del ingreso")
-            st.write("La relación entre antigüedad e ingreso permite una primera exploración; la estimación predictiva se presenta en el módulo de regresión.")
-            fig_reg=px.scatter(df,x="YearsAtCompany",y="MonthlyIncome",color="Attrition",color_discrete_map={"No":"#2583C5","Yes":"#E76F51"},opacity=.65,title="Ingreso mensual frente a antigüedad")
-            fig_reg.update_layout(template="plotly_white",title_x=.03,height=370)
-            st.plotly_chart(fig_reg,use_container_width=True)
-            st.info("Para comparar valores reales y predichos, residuos y coeficientes, abra el módulo **Regresión del ingreso**.")
-        st.markdown("#### Segmentación de empleados")
+        st.markdown("### Resultados visuales de los modelos")
+        st.caption("Estas vistas complementan los módulos de modelamiento. Las métricas se calculan en una partición reproducible; la segmentación es exploratoria y no implica perfiles de desempeño laboral.")
+
+        # Clasificación: ajustar modelos sobre la misma partición usada en el módulo individual.
+        st.markdown("#### 1. Clasificación del abandono")
+        Xc = df.drop(columns=["Attrition", "EmployeeNumber", "Over18", "StandardHours", "EmployeeCount"], errors="ignore")
+        yc = (df["Attrition"] == "Yes").astype(int)
+        Xtrc, Xtec, ytrc, ytec = train_test_split(Xc, yc, test_size=0.2, random_state=42, stratify=yc)
+        catc = Xc.select_dtypes(include=["object"]).columns.tolist()
+        numc = Xc.select_dtypes(exclude=["object"]).columns.tolist()
+        prec = ColumnTransformer([
+            ("num", Pipeline([("imputer", SimpleImputer(strategy="median")), ("scale", StandardScaler())]), numc),
+            ("cat", Pipeline([("imputer", SimpleImputer(strategy="most_frequent")), ("onehot", OneHotEncoder(handle_unknown="ignore"))]), catc)
+        ])
+        cls_models = {
+            "Regresión Logística": LogisticRegression(max_iter=2000, class_weight="balanced", random_state=42),
+            "KNN": KNeighborsClassifier(n_neighbors=7),
+            "Árbol de decisión": DecisionTreeClassifier(max_depth=5, class_weight="balanced", random_state=42),
+            "Random Forest": RandomForestClassifier(n_estimators=250, class_weight="balanced", random_state=42, min_samples_leaf=2)
+        }
+        cls_rows=[]; cls_fitted={}
+        for nm, estimator in cls_models.items():
+            pipe_cls=Pipeline([("prep", prec), ("model", estimator)])
+            pipe_cls.fit(Xtrc, ytrc)
+            pred_cls=pipe_cls.predict(Xtec)
+            prob_cls=pipe_cls.predict_proba(Xtec)[:,1]
+            cls_fitted[nm]=(pred_cls,prob_cls)
+            cls_rows.append({"Modelo":nm,"Precision abandono":precision_score(ytec,pred_cls,zero_division=0),"Recall abandono":recall_score(ytec,pred_cls,zero_division=0),"F1 abandono":f1_score(ytec,pred_cls,zero_division=0),"ROC-AUC":roc_auc_score(ytec,prob_cls)})
+        cls_metrics=pd.DataFrame(cls_rows).sort_values("F1 abandono",ascending=False)
+        cc1,cc2,cc3=st.columns(3)
+        cc1.metric("Modelos comparados",len(cls_metrics))
+        cc2.metric("Mayor F1 de abandono",f"{cls_metrics.iloc[0]['F1 abandono']:.3f}",cls_metrics.iloc[0]["Modelo"])
+        cc3.metric("Mayor Recall",f"{cls_metrics['Recall abandono'].max():.3f}")
+        cls_long=cls_metrics.melt(id_vars="Modelo",value_vars=["Precision abandono","Recall abandono","F1 abandono","ROC-AUC"],var_name="Métrica",value_name="Valor")
+        fig_cls=px.bar(cls_long,x="Modelo",y="Valor",color="Métrica",barmode="group",text_auto=".2f",title="Comparación de clasificadores en datos de prueba",color_discrete_sequence=["#176B87","#64CCC5","#E76F51","#6C63A8"])
+        fig_cls.update_layout(template="plotly_white",title_x=.02,yaxis=dict(range=[0,1]),legend_title_text="Métrica",margin=dict(l=10,r=10,t=65,b=10),height=440)
+        st.plotly_chart(fig_cls,use_container_width=True)
+        cls_choice=st.selectbox("Modelo para ver matriz de confusión",list(cls_fitted.keys()),index=list(cls_metrics["Modelo"]).index(cls_metrics.iloc[0]["Modelo"]),key="eda_cls_matrix_choice")
+        cm=confusion_matrix(ytec,cls_fitted[cls_choice][0])
+        fig_cm=px.imshow(cm,text_auto=True,x=["Predice permanece","Predice abandono"],y=["Real permanece","Real abandono"],color_continuous_scale="Blues",title=f"Matriz de confusión — {cls_choice}")
+        fig_cm.update_layout(template="plotly_white",title_x=.02,height=390)
+        st.plotly_chart(fig_cm,use_container_width=True)
+        st.caption("La partición de prueba se usa para comparar los modelos. Los resultados pueden variar si cambian los datos, el preprocesamiento o los parámetros.")
+
+        # Regresión: predicciones reales de tres modelos en la misma partición.
+        st.markdown("#### 2. Regresión del ingreso mensual")
+        reg_data=df[["Attrition","Age","MonthlyIncome","YearsAtCompany","JobRole","Department"]].copy()
+        reg_data=reg_data.rename(columns={"Attrition":"Abandono","Age":"Edad","MonthlyIncome":"IngresoMensual","YearsAtCompany":"AñosEnCompañia","JobRole":"RolDeTrabajo","Department":"Departamento"})
+        reg_dm=pd.get_dummies(reg_data,columns=["Abandono","RolDeTrabajo","Departamento"],drop_first=True)
+        yreg_eda=reg_dm["IngresoMensual"]
+        Xreg_eda=reg_dm.drop(columns=["IngresoMensual"])
+        Xtrr,Xter,ytrr,yter=train_test_split(Xreg_eda,yreg_eda,test_size=.2,random_state=42)
+        scaler_eda=StandardScaler(); Xtrrs=scaler_eda.fit_transform(Xtrr); Xters=scaler_eda.transform(Xter)
+        reg_defs={"Regresión lineal":(LinearRegression(),Xtrr,Xter),"Ridge":(Ridge(alpha=10),Xtrrs,Xters),"Lasso":(Lasso(alpha=10,max_iter=10000),Xtrrs,Xters)}
+        reg_rows=[]; reg_preds={}
+        for nm,(est,xtrain,xtest) in reg_defs.items():
+            est.fit(xtrain,ytrr); pr=est.predict(xtest); reg_preds[nm]=pr
+            reg_rows.append({"Modelo":nm,"R²":r2_score(yter,pr),"RMSE":np.sqrt(mean_squared_error(yter,pr)),"MAE":mean_absolute_error(yter,pr)})
+        reg_metrics=pd.DataFrame(reg_rows).sort_values("RMSE")
+        rm1,rm2,rm3=st.columns(3)
+        rm1.metric("Mejor modelo por RMSE",reg_metrics.iloc[0]["Modelo"])
+        rm2.metric("Menor RMSE",f"${reg_metrics.iloc[0]['RMSE']:,.0f}")
+        rm3.metric("MAE del mejor",f"${reg_metrics.iloc[0]['MAE']:,.0f}")
+        fig_regmetrics=px.bar(reg_metrics,x="Modelo",y="RMSE",color="Modelo",text_auto=".0f",title="Error de predicción del ingreso mensual (menor es mejor)",color_discrete_sequence=["#176B87","#64CCC5","#E76F51"])
+        fig_regmetrics.update_layout(template="plotly_white",title_x=.02,showlegend=False,height=370)
+        st.plotly_chart(fig_regmetrics,use_container_width=True)
+        reg_choice=st.selectbox("Modelo para comparar ingreso real y estimado",list(reg_preds.keys()),key="eda_reg_choice")
+        reg_compare=pd.DataFrame({"Ingreso real":yter.to_numpy(),"Ingreso estimado":reg_preds[reg_choice]})
+        fig_actual=px.scatter(reg_compare,x="Ingreso real",y="Ingreso estimado",opacity=.62,title=f"Ingreso real frente a estimado — {reg_choice}",color_discrete_sequence=["#176B87"])
+        lo=float(min(reg_compare.min())); hi=float(max(reg_compare.max()))
+        fig_actual.add_trace(go.Scatter(x=[lo,hi],y=[lo,hi],mode="lines",name="Estimación ideal",line=dict(color="#E76F51",dash="dash",width=2)))
+        fig_actual.update_layout(template="plotly_white",title_x=.02,height=430)
+        st.plotly_chart(fig_actual,use_container_width=True)
+
+        # Segmentación: grupos K-means y perfiles descriptivos.
+        st.markdown("#### 3. Segmentación exploratoria de empleados")
         seg_vars=["Age","MonthlyIncome","YearsAtCompany","TotalWorkingYears"]
-        seg_data=df[seg_vars].copy()
-        seg_z=StandardScaler().fit_transform(seg_data)
-        seg_labels=KMeans(n_clusters=5,random_state=42,n_init=10).fit_predict(seg_z)
+        seg_z=StandardScaler().fit_transform(df[seg_vars])
+        seg_kmeans=KMeans(n_clusters=5,random_state=42,n_init=10)
+        seg_lab=seg_kmeans.fit_predict(seg_z)
         seg_pca=PCA(n_components=2,random_state=42)
         seg_coords=seg_pca.fit_transform(seg_z)
-        seg_plot=pd.DataFrame({"Componente 1":seg_coords[:,0],"Componente 2":seg_coords[:,1],"Grupo K-means":seg_labels.astype(str),"Abandono":df["Attrition"].values})
-        fig_seg=px.scatter(seg_plot,x="Componente 1",y="Componente 2",color="Grupo K-means",symbol="Abandono",opacity=.72,title="Vista exploratoria de cinco grupos mediante PCA",hover_data=["Abandono"])
-        fig_seg.update_layout(template="plotly_white",title_x=.03,height=480)
+        seg_df=pd.DataFrame({"Componente 1":seg_coords[:,0],"Componente 2":seg_coords[:,1],"Grupo":seg_lab.astype(str),"Abandono":df["Attrition"].values})
+        fig_seg=px.scatter(seg_df,x="Componente 1",y="Componente 2",color="Grupo",symbol="Abandono",opacity=.72,title="Cinco grupos K-means proyectados mediante PCA",hover_data=["Abandono"],color_discrete_sequence=["#176B87","#64CCC5","#E76F51","#6C63A8","#E9C46A"])
+        fig_seg.update_layout(template="plotly_white",title_x=.02,height=480,legend_title_text="Grupo")
         st.plotly_chart(fig_seg,use_container_width=True)
-        st.caption(f"Los dos componentes PCA explican {seg_pca.explained_variance_ratio_.sum():.1%} de la varianza estandarizada. Esta vista usa K-means con K=5 como referencia; para cambiar variables, método o parámetros, abra **Segmentación de empleados**.")
+        seg_with_labels=df[seg_vars].copy()
+        seg_with_labels["Grupo"]=seg_lab
+        seg_profile=seg_with_labels.groupby("Grupo").agg({"Age":"mean","MonthlyIncome":"mean","YearsAtCompany":"mean","TotalWorkingYears":"mean"}).rename(columns={"Age":"Edad media","MonthlyIncome":"Ingreso medio","YearsAtCompany":"Antigüedad media","TotalWorkingYears":"Experiencia media"}).round(1).reset_index()
+        seg_counts=seg_with_labels.groupby("Grupo").size().rename("Empleados").reset_index()
+        seg_profile=seg_profile.merge(seg_counts,on="Grupo",how="left")
+        st.dataframe(seg_profile.style.format({"Ingreso medio":"${:,.0f}"}),use_container_width=True,hide_index=True)
+        st.caption(f"La proyección PCA representa {seg_pca.explained_variance_ratio_.sum():.1%} de la varianza estandarizada en dos dimensiones. Los grupos son exploratorios; no constituyen una evaluación de los empleados.")
 
     st.markdown("### Principales hallazgos de la EDA")
     med = df.groupby("Attrition")[[c for c in ["YearsAtCompany", "MonthlyIncome", "Age"] if c in df.columns]].median()
