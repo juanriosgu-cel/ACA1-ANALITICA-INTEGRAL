@@ -389,7 +389,7 @@ elif section == "Análisis exploratorio (EDA)":
     c3.metric("Abandonos", f"{n_yes:,}", f"{n_yes/total:.2%}")
     c4.metric("Permanecen", f"{n_no:,}", f"{n_no/total:.2%}")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Calidad de datos", "Distribuciones", "Comparación por abandono", "Relaciones", "Valores atípicos"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Calidad de datos", "Distribuciones", "Comparación por abandono", "Relaciones", "Valores atípicos", "Vista de modelos"])
     with tab1:
         st.markdown("### Estructura de la base")
         t1, t2 = st.columns(2)
@@ -419,7 +419,7 @@ elif section == "Análisis exploratorio (EDA)":
         dist["Porcentaje"] = dist["Empleados"] / max(len(df),1) * 100
         c1,c2 = st.columns([1,1])
         c1.dataframe(dist.style.format({"Porcentaje":"{:.2f}%"}), use_container_width=True, hide_index=True)
-        c2.plotly_chart(px.bar(dist, x="Condición", y="Empleados", color="Condición", text="Porcentaje", title="Distribución del abandono", labels={"Porcentaje":"Porcentaje (%)"}), use_container_width=True)
+        c2.plotly_chart(px.bar(dist, x="Condición", y="Empleados", color="Condición", text="Porcentaje", color_discrete_map={"Permanece":"#2583C5","Abandonó":"#E76F51"}, title="Distribución del abandono", labels={"Porcentaje":"Porcentaje (%)"}), use_container_width=True)
         st.markdown("### Estadística descriptiva")
         num_cols = [c for c in ["Age", "MonthlyIncome", "YearsAtCompany", "TotalWorkingYears", "DistanceFromHome", "YearsInCurrentRole", "YearsSinceLastPromotion", "YearsWithCurrManager"] if c in df.columns]
         st.dataframe(eda[num_cols].describe().T, use_container_width=True)
@@ -481,18 +481,70 @@ elif section == "Análisis exploratorio (EDA)":
         )
 
     with tab5:
-        st.markdown("### Detección de valores atípicos mediante IQR")
-        st.write("El rango intercuartílico (IQR) identifica observaciones alejadas del rango central. La detección no implica que deban eliminarse: deben conservarse si son plausibles para el contexto.")
+        st.markdown("### Análisis multivariado de valores atípicos")
+        st.caption("Los puntos resaltados se identifican con el criterio IQR aplicado a cada variable numérica. Un valor atípico no es necesariamente un error y no debe eliminarse sin revisión contextual.")
         out_vars = [c for c in ["Age", "MonthlyIncome", "YearsAtCompany", "TotalWorkingYears", "DistanceFromHome", "YearsInCurrentRole", "YearsSinceLastPromotion", "YearsWithCurrManager"] if c in df.columns]
         out_rows=[]
+        outlier_flags = pd.Series(False, index=df.index)
         for col in out_vars:
             q1=df[col].quantile(.25); q3=df[col].quantile(.75); iqr=q3-q1
             lo=q1-1.5*iqr; hi=q3+1.5*iqr
-            out_rows.append({"Variable":col,"Q1":q1,"Q3":q3,"IQR":iqr,"Límite inferior":lo,"Límite superior":hi,"Valores atípicos":int(((df[col]<lo)|(df[col]>hi)).sum())})
+            flags=(df[col]<lo)|(df[col]>hi)
+            outlier_flags |= flags
+            out_rows.append({"Variable":col,"Q1":q1,"Q3":q3,"IQR":iqr,"Límite inferior":lo,"Límite superior":hi,"Valores atípicos":int(flags.sum())})
         out_df=pd.DataFrame(out_rows)
+        k1,k2,k3=st.columns(3)
+        k1.metric("Variables evaluadas",len(out_vars))
+        k2.metric("Registros con algún valor atípico",f"{int(outlier_flags.sum()):,}")
+        k3.metric("Criterio aplicado","IQR · 1,5 × rango")
         st.dataframe(out_df.style.format({c:"{:,.2f}" for c in ["Q1","Q3","IQR","Límite inferior","Límite superior"]}), use_container_width=True, hide_index=True)
-        out_var=st.selectbox("Variable para visualizar valores atípicos", out_vars, key="eda_outlier_var")
-        st.plotly_chart(px.box(df, y=out_var, points="outliers", title=f"Valores atípicos identificados visualmente: {out_var}"), use_container_width=True)
+        plot_df=df.copy()
+        plot_df["Clasificación IQR"] = np.where(outlier_flags, "Posible valor atípico", "Dentro del rango IQR")
+        plot_specs=[("Age","MonthlyIncome","Edad e ingreso mensual"),("MonthlyIncome","YearsAtCompany","Ingreso y antigüedad"),("Age","YearsAtCompany","Edad y antigüedad")]
+        plot_specs=[spec for spec in plot_specs if spec[0] in df.columns and spec[1] in df.columns]
+        cols=st.columns(len(plot_specs))
+        for colbox,(xvar,yvar,title) in zip(cols,plot_specs):
+            fig=px.scatter(plot_df,x=xvar,y=yvar,color="Clasificación IQR",color_discrete_map={"Dentro del rango IQR":"#2583C5","Posible valor atípico":"#E76F51"},opacity=.72,title=title,hover_data=["Attrition"])
+            fig.update_layout(template="plotly_white",title_x=.03,legend_title_text="Tipo de registro",font=dict(size=12),margin=dict(l=12,r=12,t=55,b=12),height=390)
+            colbox.plotly_chart(fig,use_container_width=True)
+        out_var=st.selectbox("Explorar una variable en detalle", out_vars, key="eda_outlier_var")
+        boxfig=px.box(df,y=out_var,points="outliers",color_discrete_sequence=["#2583C5"],title=f"Distribución y valores extremos: {out_var}")
+        boxfig.update_layout(template="plotly_white",title_x=.03,margin=dict(l=12,r=12,t=55,b=12),height=420)
+        st.plotly_chart(boxfig,use_container_width=True)
+        st.markdown("#### Criterios de lectura")
+        st.markdown("- **Azul:** registros que no presentan valores fuera de los límites IQR en las variables evaluadas.\n- **Coral:** registros con al menos un valor fuera de esos límites.\n- **Importante:** la marca es una alerta exploratoria, no una conclusión de error o anomalía laboral.")
+
+    with tab6:
+        st.markdown("### Vista integrada de los modelos")
+        st.caption("Gráficas de referencia calculadas en esta sección a partir del mismo dataset. Los módulos individuales conservan sus controles y análisis detallados.")
+        left,right=st.columns(2)
+        with left:
+            st.markdown("#### Clasificación del abandono")
+            counts_model=df["Attrition"].value_counts().reindex(["No","Yes"],fill_value=0)
+            class_view=pd.DataFrame({"Condición":["Permanece","Abandonó"],"Empleados":[int(counts_model["No"]),int(counts_model["Yes"])]})
+            fig_class=px.bar(class_view,x="Condición",y="Empleados",color="Condición",text="Empleados",color_discrete_map={"Permanece":"#2583C5","Abandonó":"#E76F51"},title="Distribución de la variable objetivo")
+            fig_class.update_layout(template="plotly_white",title_x=.03,showlegend=False,height=370)
+            st.plotly_chart(fig_class,use_container_width=True)
+            st.info("Para la matriz de confusión, Recall, F1 y comparación de clasificadores, abra el módulo **Clasificación del abandono**.")
+        with right:
+            st.markdown("#### Regresión del ingreso")
+            st.write("La relación entre antigüedad e ingreso permite una primera exploración; la estimación predictiva se presenta en el módulo de regresión.")
+            fig_reg=px.scatter(df,x="YearsAtCompany",y="MonthlyIncome",color="Attrition",color_discrete_map={"No":"#2583C5","Yes":"#E76F51"},opacity=.65,title="Ingreso mensual frente a antigüedad")
+            fig_reg.update_layout(template="plotly_white",title_x=.03,height=370)
+            st.plotly_chart(fig_reg,use_container_width=True)
+            st.info("Para comparar valores reales y predichos, residuos y coeficientes, abra el módulo **Regresión del ingreso**.")
+        st.markdown("#### Segmentación de empleados")
+        seg_vars=["Age","MonthlyIncome","YearsAtCompany","TotalWorkingYears"]
+        seg_data=df[seg_vars].copy()
+        seg_z=StandardScaler().fit_transform(seg_data)
+        seg_labels=KMeans(n_clusters=5,random_state=42,n_init=10).fit_predict(seg_z)
+        seg_pca=PCA(n_components=2,random_state=42)
+        seg_coords=seg_pca.fit_transform(seg_z)
+        seg_plot=pd.DataFrame({"Componente 1":seg_coords[:,0],"Componente 2":seg_coords[:,1],"Grupo K-means":seg_labels.astype(str),"Abandono":df["Attrition"].values})
+        fig_seg=px.scatter(seg_plot,x="Componente 1",y="Componente 2",color="Grupo K-means",symbol="Abandono",opacity=.72,title="Vista exploratoria de cinco grupos mediante PCA",hover_data=["Abandono"])
+        fig_seg.update_layout(template="plotly_white",title_x=.03,height=480)
+        st.plotly_chart(fig_seg,use_container_width=True)
+        st.caption(f"Los dos componentes PCA explican {seg_pca.explained_variance_ratio_.sum():.1%} de la varianza estandarizada. Esta vista usa K-means con K=5 como referencia; para cambiar variables, método o parámetros, abra **Segmentación de empleados**.")
 
     st.markdown("### Principales hallazgos de la EDA")
     med = df.groupby("Attrition")[[c for c in ["YearsAtCompany", "MonthlyIncome", "Age"] if c in df.columns]].median()
